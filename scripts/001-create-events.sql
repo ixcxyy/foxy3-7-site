@@ -9,8 +9,17 @@ CREATE TABLE IF NOT EXISTS events (
   maps_url VARCHAR(500),
   ticket_url VARCHAR(500),
   image_url VARCHAR(500),
+  image_scale INTEGER DEFAULT 100,
+  display_order INTEGER DEFAULT 0,
   is_published BOOLEAN DEFAULT true,
   created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS event_images (
+  event_id INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+  mime_type VARCHAR(100) NOT NULL,
+  data_base64 TEXT NOT NULL,
   updated_at TIMESTAMP DEFAULT NOW()
 );
 

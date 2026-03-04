@@ -1,6 +1,6 @@
 "use client"
 
-import { FormEvent, useEffect, useState } from "react"
+import { FormEvent, useEffect, useMemo, useState } from "react"
 
 type AdminEvent = {
   id: number
@@ -13,7 +13,14 @@ type AdminEvent = {
   maps_url: string | null
   ticket_url: string | null
   image_url: string | null
+  image_scale: number | null
+  display_order: number | null
   is_published: boolean
+}
+
+type UploadedImage = {
+  base64: string
+  mimeType: string
 }
 
 type EventForm = {
@@ -26,7 +33,7 @@ type EventForm = {
   venue_url: string
   maps_url: string
   ticket_url: string
-  image_url: string
+  image_scale: number
   is_published: boolean
 }
 
@@ -40,7 +47,7 @@ const emptyForm: EventForm = {
   venue_url: "",
   maps_url: "",
   ticket_url: "",
-  image_url: "",
+  image_scale: 100,
   is_published: true,
 }
 
@@ -50,9 +57,31 @@ function formatDate(value: string) {
   return d.toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit", year: "numeric" })
 }
 
-function formatPreviewDate(value: string) {
-  if (!value) return "TT.MM.JJJJ"
-  return formatDate(value)
+async function fileToOptimizedBase64(file: File): Promise<UploadedImage> {
+  const bitmap = await createImageBitmap(file)
+  const maxWidth = 1600
+  const width = bitmap.width > maxWidth ? maxWidth : bitmap.width
+  const height = Math.round((bitmap.height * width) / bitmap.width)
+
+  const canvas = document.createElement("canvas")
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext("2d")
+  if (!ctx) throw new Error("Bild konnte nicht verarbeitet werden")
+  ctx.drawImage(bitmap, 0, 0, width, height)
+
+  const mimeType = file.type === "image/png" ? "image/png" : "image/jpeg"
+  const quality = mimeType === "image/jpeg" ? 0.82 : undefined
+  const dataUrl = canvas.toDataURL(mimeType, quality)
+  const base64 = dataUrl.split(",")[1] || ""
+  if (!base64) throw new Error("Bild konnte nicht kodiert werden")
+
+  const approxBytes = Math.ceil((base64.length * 3) / 4)
+  if (approxBytes > 1_900_000) {
+    throw new Error("Bild ist zu gross. Bitte ein kleineres Bild waehlen.")
+  }
+
+  return { base64, mimeType }
 }
 
 export default function AdminPage() {
@@ -63,6 +92,10 @@ export default function AdminPage() {
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [status, setStatus] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [reordering, setReordering] = useState(false)
+  const [uploadedImage, setUploadedImage] = useState<UploadedImage | null>(null)
+  const [uploadedImagePreview, setUploadedImagePreview] = useState<string | null>(null)
 
   async function checkAuth() {
     setLoading(true)
@@ -76,11 +109,14 @@ export default function AdminPage() {
   async function loadEvents() {
     const response = await fetch("/api/admin/events", { cache: "no-store" })
     if (!response.ok) {
-      setStatus("Events konnten nicht geladen werden.")
+      const body = await response.json().catch(() => ({}))
+      setStatus(body?.error ? `Events konnten nicht geladen werden: ${body.error}` : "Events konnten nicht geladen werden.")
       return
     }
     const data = await response.json()
-    setEvents(Array.isArray(data) ? data : [])
+    const normalized = Array.isArray(data) ? data : []
+    normalized.sort((a: AdminEvent, b: AdminEvent) => (a.display_order ?? 0) - (b.display_order ?? 0))
+    setEvents(normalized)
   }
 
   useEffect(() => {
@@ -88,6 +124,12 @@ export default function AdminPage() {
       if (isAuth) loadEvents()
     })
   }, [])
+
+  const previewImage = useMemo(() => {
+    if (uploadedImagePreview) return uploadedImagePreview
+    const editingEvent = events.find((e) => e.id === form.id)
+    return editingEvent?.image_url || null
+  }, [uploadedImagePreview, events, form.id])
 
   async function onLogin(event: FormEvent) {
     event.preventDefault()
@@ -113,12 +155,40 @@ export default function AdminPage() {
     setAuthenticated(false)
     setEvents([])
     setForm(emptyForm)
+    setUploadedImage(null)
+    setUploadedImagePreview(null)
     setStatus("Abgemeldet.")
+  }
+
+  async function onImageSelect(file: File | null) {
+    if (!file) {
+      setUploadedImage(null)
+      setUploadedImagePreview(null)
+      return
+    }
+    try {
+      setStatus("Bild wird optimiert...")
+      const optimized = await fileToOptimizedBase64(file)
+      setUploadedImage(optimized)
+      setUploadedImagePreview(`data:${optimized.mimeType};base64,${optimized.base64}`)
+      setStatus("Bild bereit.")
+    } catch (error) {
+      setUploadedImage(null)
+      setUploadedImagePreview(null)
+      setStatus(error instanceof Error ? error.message : "Bild-Upload fehlgeschlagen.")
+    }
+  }
+
+  function clearEditor() {
+    setForm(emptyForm)
+    setUploadedImage(null)
+    setUploadedImagePreview(null)
   }
 
   async function onSave(event: FormEvent) {
     event.preventDefault()
     setStatus("")
+    setSaving(true)
 
     const payload = {
       ...form,
@@ -127,7 +197,7 @@ export default function AdminPage() {
       venue_url: form.venue_url || null,
       maps_url: form.maps_url || null,
       ticket_url: form.ticket_url || null,
-      image_url: form.image_url || null,
+      uploaded_image: uploadedImage,
     }
 
     const method = form.id ? "PUT" : "POST"
@@ -137,6 +207,8 @@ export default function AdminPage() {
       body: JSON.stringify(payload),
     })
 
+    setSaving(false)
+
     if (!response.ok) {
       const body = await response.json().catch(() => ({}))
       setStatus(body?.error ? `Speichern fehlgeschlagen: ${body.error}` : "Speichern fehlgeschlagen.")
@@ -144,7 +216,7 @@ export default function AdminPage() {
     }
 
     setStatus(form.id ? "Event aktualisiert." : "Event erstellt.")
-    setForm(emptyForm)
+    clearEditor()
     await loadEvents()
   }
 
@@ -159,9 +231,11 @@ export default function AdminPage() {
       venue_url: event.venue_url ?? "",
       maps_url: event.maps_url ?? "",
       ticket_url: event.ticket_url ?? "",
-      image_url: event.image_url ?? "",
+      image_scale: Math.max(50, Math.min(200, Number(event.image_scale) || 100)),
       is_published: Boolean(event.is_published),
     })
+    setUploadedImage(null)
+    setUploadedImagePreview(null)
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
 
@@ -170,11 +244,40 @@ export default function AdminPage() {
     setStatus("")
     const response = await fetch(`/api/admin/events?id=${id}`, { method: "DELETE" })
     if (!response.ok) {
-      setStatus("Loeschen fehlgeschlagen.")
+      const body = await response.json().catch(() => ({}))
+      setStatus(body?.error ? `Loeschen fehlgeschlagen: ${body.error}` : "Loeschen fehlgeschlagen.")
       return
     }
     setStatus("Event geloescht.")
     await loadEvents()
+  }
+
+  async function saveOrder(next: AdminEvent[]) {
+    const orderedIds = next.map((event) => event.id)
+    setReordering(true)
+    const response = await fetch("/api/admin/events", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orderedIds }),
+    })
+    setReordering(false)
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      setStatus(body?.error ? `Sortierung fehlgeschlagen: ${body.error}` : "Sortierung fehlgeschlagen.")
+      return
+    }
+    setStatus("Reihenfolge gespeichert.")
+    setEvents(next.map((event, index) => ({ ...event, display_order: index + 1 })))
+  }
+
+  async function moveEvent(index: number, direction: -1 | 1) {
+    const target = index + direction
+    if (target < 0 || target >= events.length) return
+    const next = [...events]
+    const temp = next[index]
+    next[index] = next[target]
+    next[target] = temp
+    await saveOrder(next)
   }
 
   if (loading) {
@@ -237,14 +340,14 @@ export default function AdminPage() {
 
   return (
     <main className="min-h-screen px-6 py-12 md:py-16" style={{ backgroundColor: "#0a0a0a", color: "#f0f0f0" }}>
-      <div className="mx-auto max-w-6xl">
+      <div className="mx-auto max-w-7xl">
         <div className="mb-8 flex items-center justify-between gap-4">
           <div>
             <h1 className="text-3xl font-black uppercase md:text-4xl" style={{ color: "#fff" }}>
               Events Admin
             </h1>
             <p className="font-mono text-xs tracking-[0.2em] uppercase" style={{ color: "#e63946" }}>
-              Verwalten von Shows
+              Upload, Editor, Sortierung
             </p>
           </div>
           <button
@@ -320,13 +423,37 @@ export default function AdminPage() {
                 className="px-3 py-2 text-sm"
                 style={{ backgroundColor: "#090909", border: "1px solid #222", color: "#fff" }}
               />
-              <input
-                value={form.image_url}
-                onChange={(e) => setForm((p) => ({ ...p, image_url: e.target.value }))}
-                placeholder="Image URL (optional)"
-                className="px-3 py-2 text-sm"
-                style={{ backgroundColor: "#090909", border: "1px solid #222", color: "#fff" }}
-              />
+              <div className="flex items-center gap-3 px-3 py-2" style={{ backgroundColor: "#090909", border: "1px solid #222" }}>
+                <label className="font-mono text-[11px] uppercase tracking-[0.1em]" style={{ color: "#999" }}>
+                  Bildgroesse
+                </label>
+                <input
+                  type="range"
+                  min={50}
+                  max={200}
+                  step={5}
+                  value={form.image_scale}
+                  onChange={(e) => setForm((p) => ({ ...p, image_scale: Number(e.target.value) }))}
+                  className="flex-1"
+                />
+                <span className="font-mono text-xs" style={{ color: "#e63946" }}>
+                  {form.image_scale}%
+                </span>
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="mb-2 block font-mono text-[11px] uppercase tracking-[0.1em]" style={{ color: "#999" }}>
+                  Bild hochladen (wird in Neon gespeichert)
+                </label>
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={(e) => onImageSelect(e.target.files?.[0] || null)}
+                  className="w-full px-3 py-2 text-sm"
+                  style={{ backgroundColor: "#090909", border: "1px solid #222", color: "#fff" }}
+                />
+              </div>
+
               <textarea
                 value={form.description}
                 onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
@@ -347,21 +474,20 @@ export default function AdminPage() {
               <div className="flex gap-3 md:col-span-2">
                 <button
                   type="submit"
-                  className="px-4 py-2 font-mono text-xs tracking-[0.2em] uppercase"
+                  disabled={saving}
+                  className="px-4 py-2 font-mono text-xs tracking-[0.2em] uppercase disabled:opacity-50"
                   style={{ backgroundColor: "#e63946", color: "#fff" }}
                 >
-                  {form.id ? "Aktualisieren" : "Erstellen"}
+                  {saving ? "Speichert..." : form.id ? "Aktualisieren" : "Erstellen"}
                 </button>
-                {form.id && (
-                  <button
-                    type="button"
-                    onClick={() => setForm(emptyForm)}
-                    className="px-4 py-2 font-mono text-xs tracking-[0.2em] uppercase"
-                    style={{ border: "1px solid #333", color: "#bbb" }}
-                  >
-                    Abbrechen
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={clearEditor}
+                  className="px-4 py-2 font-mono text-xs tracking-[0.2em] uppercase"
+                  style={{ border: "1px solid #333", color: "#bbb" }}
+                >
+                  Zuruecksetzen
+                </button>
               </div>
             </form>
 
@@ -375,7 +501,7 @@ export default function AdminPage() {
               >
                 <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: "1px solid rgba(230,57,70,0.15)" }}>
                   <p className="font-mono text-xs tracking-[0.15em] uppercase" style={{ color: "#e63946" }}>
-                    {formatPreviewDate(form.event_date)}
+                    {form.event_date ? formatDate(form.event_date) : "TT.MM.JJJJ"}
                   </p>
                   <p className="text-xs" style={{ color: form.is_published ? "#7cd992" : "#999" }}>
                     {form.is_published ? "Veroeffentlicht" : "Entwurf"}
@@ -388,9 +514,11 @@ export default function AdminPage() {
                   <p className="font-mono text-xs tracking-[0.08em] uppercase" style={{ color: "#e63946" }}>
                     {form.venue_name || "Venue Name"}
                   </p>
-                  <p className="text-sm" style={{ color: "#888" }}>
-                    {form.venue_address || "Venue Adresse"}
-                  </p>
+                  {form.venue_address && (
+                    <p className="text-sm" style={{ color: "#888" }}>
+                      {form.venue_address}
+                    </p>
+                  )}
                   {form.description && (
                     <p className="text-sm leading-relaxed" style={{ color: "#b5b5b5" }}>
                       {form.description}
@@ -408,17 +536,6 @@ export default function AdminPage() {
                         Google Maps
                       </a>
                     )}
-                    {form.venue_url && (
-                      <a
-                        href={form.venue_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3 py-2 font-mono text-[11px] tracking-[0.15em] uppercase"
-                        style={{ border: "1px solid #333", color: "#aaa" }}
-                      >
-                        Venue Site
-                      </a>
-                    )}
                     {form.ticket_url && (
                       <a
                         href={form.ticket_url}
@@ -431,13 +548,15 @@ export default function AdminPage() {
                       </a>
                     )}
                   </div>
-                  {form.image_url && (
-                    <img
-                      src={form.image_url}
-                      alt="Event Preview"
-                      className="h-44 w-full object-cover"
-                      style={{ border: "1px solid #1f1f1f" }}
-                    />
+                  {previewImage && (
+                    <div style={{ width: `${Math.max(50, Math.min(200, form.image_scale))}%` }}>
+                      <img
+                        src={previewImage}
+                        alt="Event Preview"
+                        className="h-44 w-full object-cover"
+                        style={{ border: "1px solid #1f1f1f" }}
+                      />
+                    </div>
                   )}
                 </div>
               </article>
@@ -446,14 +565,19 @@ export default function AdminPage() {
         </section>
 
         <section className="p-6 md:p-8" style={{ backgroundColor: "#0f0f0f", border: "1px solid rgba(230,57,70,0.15)" }}>
-          <h2 className="mb-5 text-xl font-bold uppercase tracking-tight" style={{ color: "#fff" }}>
-            Alle Events
-          </h2>
+          <div className="mb-5 flex items-center justify-between">
+            <h2 className="text-xl font-bold uppercase tracking-tight" style={{ color: "#fff" }}>
+              Alle Events
+            </h2>
+            <p className="font-mono text-xs" style={{ color: reordering ? "#e63946" : "#666" }}>
+              {reordering ? "Sortierung wird gespeichert..." : "Editor: Reihenfolge per Pfeile"}
+            </p>
+          </div>
           {events.length === 0 ? (
             <p style={{ color: "#777" }}>Noch keine Events vorhanden.</p>
           ) : (
             <div className="space-y-3">
-              {events.map((event) => (
+              {events.map((event, index) => (
                 <article
                   key={event.id}
                   className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between"
@@ -470,7 +594,23 @@ export default function AdminPage() {
                       {event.is_published ? "Veroeffentlicht" : "Entwurf"}
                     </p>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => moveEvent(index, -1)}
+                      disabled={reordering || index === 0}
+                      className="px-3 py-2 font-mono text-xs tracking-[0.1em] uppercase disabled:opacity-40"
+                      style={{ border: "1px solid #333", color: "#aaa" }}
+                    >
+                      Hoch
+                    </button>
+                    <button
+                      onClick={() => moveEvent(index, 1)}
+                      disabled={reordering || index === events.length - 1}
+                      className="px-3 py-2 font-mono text-xs tracking-[0.1em] uppercase disabled:opacity-40"
+                      style={{ border: "1px solid #333", color: "#aaa" }}
+                    >
+                      Runter
+                    </button>
                     <button
                       onClick={() => onEdit(event)}
                       className="px-3 py-2 font-mono text-xs tracking-[0.15em] uppercase"

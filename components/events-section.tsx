@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, MouseEvent } from "react"
 import { Calendar, MapPin, ExternalLink, Ticket } from "lucide-react"
+import Image from "next/image"
 import { useInView } from "@/hooks/use-parallax"
 
 interface Event {
@@ -15,6 +16,7 @@ interface Event {
   maps_url: string | null
   ticket_url: string | null
   image_url: string | null
+  image_scale: number | null
 }
 
 function EventCard({ event, index }: { event: Event; index: number }) {
@@ -193,18 +195,23 @@ function EventCard({ event, index }: { event: Event; index: number }) {
           </div>
         </div>
 
-        {/* Image overlay if present */}
+        {/* Image preview if present */}
         {event.image_url && (
           <div
-            className="absolute top-0 right-0 hidden h-full w-48 opacity-10 transition-opacity duration-500 group-hover:opacity-20 lg:block"
+            className="relative hidden min-h-[200px] lg:block"
             style={{
-              backgroundImage: `url(${event.image_url})`,
-              backgroundSize: "cover",
-              backgroundPosition: "center",
-              maskImage: "linear-gradient(to left, rgba(0,0,0,0.5), transparent)",
-              WebkitMaskImage: "linear-gradient(to left, rgba(0,0,0,0.5), transparent)",
+              width: `${Math.max(50, Math.min(200, Number(event.image_scale) || 100)) * 1.8}px`,
+              borderLeft: "1px solid rgba(230,57,70,0.1)",
             }}
-          />
+          >
+            <Image
+              src={event.image_url}
+              alt={event.title}
+              fill
+              className="object-cover opacity-70 transition-opacity duration-500 group-hover:opacity-90"
+              sizes="(max-width: 1024px) 0px, 240px"
+            />
+          </div>
         )}
       </div>
     </div>

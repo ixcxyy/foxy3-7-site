@@ -2,6 +2,11 @@ import { neon } from "@neondatabase/serverless"
 import { NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
 
+type UploadedImage = {
+  base64: string
+  mimeType: string
+}
+
 function getSql() {
   const databaseUrl =
     process.env.DATABASE_URL ||
@@ -26,6 +31,12 @@ async function isAuthenticated() {
   return rows.length > 0
 }
 
+function imageUrlFor(eventId: number, externalUrl: string | null, hasUploadedImage: boolean) {
+  if (externalUrl) return externalUrl
+  if (hasUploadedImage) return `/api/events/image/${eventId}`
+  return null
+}
+
 async function ensureEventsSchema() {
   const sql = getSql()
 
@@ -41,8 +52,19 @@ async function ensureEventsSchema() {
       maps_url VARCHAR(500),
       ticket_url VARCHAR(500),
       image_url VARCHAR(500),
+      image_scale INTEGER DEFAULT 100,
+      display_order INTEGER DEFAULT 0,
       is_published BOOLEAN DEFAULT true,
       created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS event_images (
+      event_id INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+      mime_type VARCHAR(100) NOT NULL,
+      data_base64 TEXT NOT NULL,
       updated_at TIMESTAMP DEFAULT NOW()
     )
   `
@@ -59,6 +81,8 @@ async function ensureEventsSchema() {
     ADD COLUMN IF NOT EXISTS maps_url VARCHAR(500),
     ADD COLUMN IF NOT EXISTS ticket_url VARCHAR(500),
     ADD COLUMN IF NOT EXISTS image_url VARCHAR(500),
+    ADD COLUMN IF NOT EXISTS image_scale INTEGER DEFAULT 100,
+    ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0,
     ADD COLUMN IF NOT EXISTS is_published BOOLEAN DEFAULT true,
     ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW(),
     ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()
@@ -74,13 +98,31 @@ async function ensureEventsSchema() {
       venue_address = COALESCE(venue_address, city),
       venue_url = COALESCE(venue_url, venue_link),
       maps_url = COALESCE(maps_url, venue_link),
-      ticket_url = COALESCE(ticket_url, ticket_link)
+      ticket_url = COALESCE(ticket_url, ticket_link),
+      image_scale = COALESCE(image_scale, 100),
+      display_order = COALESCE(display_order, id)
     WHERE
       venue_name IS NULL
       OR venue_address IS NULL
       OR venue_url IS NULL
       OR maps_url IS NULL
       OR ticket_url IS NULL
+      OR image_scale IS NULL
+      OR display_order IS NULL
+  `
+}
+
+async function upsertUploadedImage(eventId: number, uploadedImage: UploadedImage | null) {
+  if (!uploadedImage?.base64 || !uploadedImage?.mimeType) return
+  const sql = getSql()
+  await sql`
+    INSERT INTO event_images (event_id, mime_type, data_base64, updated_at)
+    VALUES (${eventId}, ${uploadedImage.mimeType}, ${uploadedImage.base64}, NOW())
+    ON CONFLICT (event_id)
+    DO UPDATE SET
+      mime_type = EXCLUDED.mime_type,
+      data_base64 = EXCLUDED.data_base64,
+      updated_at = NOW()
   `
 }
 
@@ -91,8 +133,21 @@ export async function GET() {
   try {
     await ensureEventsSchema()
     const sql = getSql()
-    const events = await sql`SELECT * FROM events ORDER BY event_date ASC`
-    return NextResponse.json(events)
+    const events = await sql`
+      SELECT
+        e.*,
+        CASE WHEN ei.event_id IS NULL THEN false ELSE true END AS has_uploaded_image
+      FROM events e
+      LEFT JOIN event_images ei ON ei.event_id = e.id
+      ORDER BY e.display_order ASC, e.event_date ASC, e.id ASC
+    `
+
+    const normalized = events.map((event) => ({
+      ...event,
+      image_url: imageUrlFor(event.id, event.image_url, event.has_uploaded_image),
+    }))
+
+    return NextResponse.json(normalized)
   } catch (error) {
     console.error("Failed to fetch events:", error)
     const message = error instanceof Error ? error.message : "Failed to fetch events"
@@ -108,24 +163,44 @@ export async function POST(request: NextRequest) {
     await ensureEventsSchema()
     const sql = getSql()
     const body = await request.json()
-    const { title, description, event_date, venue_name, venue_address, venue_url, maps_url, ticket_url, image_url, is_published } = body
+    const {
+      title,
+      description,
+      event_date,
+      venue_name,
+      venue_address,
+      venue_url,
+      maps_url,
+      ticket_url,
+      image_scale,
+      is_published,
+      uploaded_image,
+    } = body
+
+    const nextOrder = await sql`SELECT COALESCE(MAX(display_order), 0) + 1 AS value FROM events`
 
     const result = await sql`
       INSERT INTO events (
         title, description, event_date,
-        venue_name, venue_address, venue_url, maps_url, ticket_url, image_url,
+        venue_name, venue_address, venue_url, maps_url, ticket_url,
+        image_scale, display_order,
         venue, venue_link, city, ticket_link,
         is_published
       )
       VALUES (
         ${title}, ${description || null}, ${event_date},
-        ${venue_name}, ${venue_address || null}, ${venue_url || null}, ${maps_url || null}, ${ticket_url || null}, ${image_url || null},
+        ${venue_name}, ${venue_address || null}, ${venue_url || null}, ${maps_url || null}, ${ticket_url || null},
+        ${Math.max(50, Math.min(200, Number(image_scale) || 100))}, ${nextOrder[0].value},
         ${venue_name}, ${maps_url || venue_url || null}, ${venue_address || null}, ${ticket_url || null},
         ${is_published ?? true}
       )
       RETURNING *
     `
-    return NextResponse.json(result[0], { status: 201 })
+
+    const event = result[0]
+    await upsertUploadedImage(event.id, uploaded_image || null)
+
+    return NextResponse.json(event, { status: 201 })
   } catch (error) {
     console.error("Failed to create event:", error)
     const message = error instanceof Error ? error.message : "Failed to create event"
@@ -141,7 +216,20 @@ export async function PUT(request: NextRequest) {
     await ensureEventsSchema()
     const sql = getSql()
     const body = await request.json()
-    const { id, title, description, event_date, venue_name, venue_address, venue_url, maps_url, ticket_url, image_url, is_published } = body
+    const {
+      id,
+      title,
+      description,
+      event_date,
+      venue_name,
+      venue_address,
+      venue_url,
+      maps_url,
+      ticket_url,
+      image_scale,
+      is_published,
+      uploaded_image,
+    } = body
 
     const result = await sql`
       UPDATE events SET
@@ -153,7 +241,7 @@ export async function PUT(request: NextRequest) {
         venue_url = ${venue_url || null},
         maps_url = ${maps_url || null},
         ticket_url = ${ticket_url || null},
-        image_url = ${image_url || null},
+        image_scale = ${Math.max(50, Math.min(200, Number(image_scale) || 100))},
         venue = ${venue_name},
         venue_link = ${maps_url || venue_url || null},
         city = ${venue_address || null},
@@ -163,10 +251,45 @@ export async function PUT(request: NextRequest) {
       WHERE id = ${id}
       RETURNING *
     `
+
+    if (!result[0]) {
+      return NextResponse.json({ error: "Event not found" }, { status: 404 })
+    }
+
+    await upsertUploadedImage(Number(id), uploaded_image || null)
     return NextResponse.json(result[0])
   } catch (error) {
     console.error("Failed to update event:", error)
     const message = error instanceof Error ? error.message : "Failed to update event"
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  if (!(await isAuthenticated())) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+  try {
+    await ensureEventsSchema()
+    const sql = getSql()
+    const body = await request.json()
+    const orderedIds: number[] = Array.isArray(body?.orderedIds) ? body.orderedIds : []
+    if (orderedIds.length === 0) {
+      return NextResponse.json({ error: "orderedIds required" }, { status: 400 })
+    }
+
+    for (let i = 0; i < orderedIds.length; i += 1) {
+      await sql`
+        UPDATE events
+        SET display_order = ${i + 1}, updated_at = NOW()
+        WHERE id = ${orderedIds[i]}
+      `
+    }
+
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error("Failed to reorder events:", error)
+    const message = error instanceof Error ? error.message : "Failed to reorder events"
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }
@@ -176,11 +299,13 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
   try {
+    await ensureEventsSchema()
     const sql = getSql()
     const { searchParams } = new URL(request.url)
     const id = searchParams.get("id")
     if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 })
 
+    await sql`DELETE FROM event_images WHERE event_id = ${id}`
     await sql`DELETE FROM events WHERE id = ${id}`
     return NextResponse.json({ success: true })
   } catch (error) {

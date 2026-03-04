@@ -20,7 +20,18 @@ async function migrate() {
     ADD COLUMN IF NOT EXISTS venue_address VARCHAR(500),
     ADD COLUMN IF NOT EXISTS venue_url VARCHAR(500),
     ADD COLUMN IF NOT EXISTS maps_url VARCHAR(500),
-    ADD COLUMN IF NOT EXISTS ticket_url VARCHAR(500)
+    ADD COLUMN IF NOT EXISTS ticket_url VARCHAR(500),
+    ADD COLUMN IF NOT EXISTS image_scale INTEGER DEFAULT 100,
+    ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0
+  `
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS event_images (
+      event_id INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+      mime_type VARCHAR(100) NOT NULL,
+      data_base64 TEXT NOT NULL,
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
   `
 
   await sql`ALTER TABLE events ALTER COLUMN venue DROP NOT NULL`
@@ -33,7 +44,9 @@ async function migrate() {
       venue_address = COALESCE(venue_address, city),
       venue_url = COALESCE(venue_url, venue_link),
       maps_url = COALESCE(maps_url, venue_link),
-      ticket_url = COALESCE(ticket_url, ticket_link)
+      ticket_url = COALESCE(ticket_url, ticket_link),
+      image_scale = COALESCE(image_scale, 100),
+      display_order = COALESCE(display_order, id)
   `
 
   console.log("Schema alignment complete.")
