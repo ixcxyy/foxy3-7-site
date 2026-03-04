@@ -165,45 +165,45 @@ export function HeroSection() {
             {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
           </button>
         </div>
-        <div
-          className={`mt-5 flex flex-wrap items-center justify-center gap-3 transition-all duration-1000 delay-700 ease-out ${
-            isLoaded ? "translate-y-0 opacity-100" : "translate-y-8 opacity-0"
-          }`}
-        >
+        <div className={`mt-6 w-full max-w-xl transition-all duration-1000 delay-700 ease-out ${isLoaded ? "translate-y-0 opacity-100" : "translate-y-8 opacity-0"}`}>
           <a
             href="https://open.spotify.com/intl-de/artist/3RLHej5PCmjNewORATx5KM"
             target="_blank"
             rel="noopener noreferrer"
-            className="px-4 py-2 font-mono text-[10px] tracking-[0.2em] uppercase transition-colors duration-300"
-            style={{ color: "#e63946", border: "1px solid rgba(230,57,70,0.3)" }}
+            className="group block px-6 py-4 text-left transition-all duration-300"
+            style={{ border: "1px solid rgba(29,185,84,0.5)", backgroundColor: "rgba(29,185,84,0.1)" }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.color = "#fff"
-              e.currentTarget.style.borderColor = "#e63946"
+              e.currentTarget.style.backgroundColor = "rgba(29,185,84,0.18)"
+              e.currentTarget.style.transform = "translateY(-2px)"
+              e.currentTarget.style.boxShadow = "0 12px 30px rgba(29,185,84,0.25)"
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.color = "#e63946"
-              e.currentTarget.style.borderColor = "rgba(230,57,70,0.3)"
+              e.currentTarget.style.backgroundColor = "rgba(29,185,84,0.1)"
+              e.currentTarget.style.transform = "translateY(0)"
+              e.currentTarget.style.boxShadow = "none"
             }}
           >
-            Spotify
+            <p className="font-mono text-[10px] tracking-[0.25em] uppercase" style={{ color: "#1db954" }}>
+              Jetzt streamen
+            </p>
+            <p className="mt-1 text-lg font-black uppercase tracking-tight" style={{ color: "#fff" }}>
+              Auf Spotify hoeren
+            </p>
+            <p className="mt-1 text-sm" style={{ color: "#b7b7b7" }}>
+              Follow, monatliche Hörer pushen und Tracks direkt teilen.
+            </p>
           </a>
-          <a
-            href="https://www.instagram.com/foxy_3.7/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-4 py-2 font-mono text-[10px] tracking-[0.2em] uppercase transition-colors duration-300"
-            style={{ color: "#e63946", border: "1px solid rgba(230,57,70,0.3)" }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = "#fff"
-              e.currentTarget.style.borderColor = "#e63946"
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = "#e63946"
-              e.currentTarget.style.borderColor = "rgba(230,57,70,0.3)"
-            }}
-          >
-            Instagram
-          </a>
+          <div className="mt-3 flex items-center justify-center">
+            <a
+              href="https://www.instagram.com/foxy_3.7/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2 font-mono text-[10px] tracking-[0.2em] uppercase transition-colors duration-300"
+              style={{ color: "#e63946", border: "1px solid rgba(230,57,70,0.3)" }}
+            >
+              Instagram
+            </a>
+          </div>
         </div>
       </div>
 

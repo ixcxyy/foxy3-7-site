@@ -28,32 +28,6 @@ function toLocalDay(dateValue: string | Date) {
   return d
 }
 
-function toCalendarDate(date: Date) {
-  const yyyy = date.getUTCFullYear()
-  const mm = String(date.getUTCMonth() + 1).padStart(2, "0")
-  const dd = String(date.getUTCDate()).padStart(2, "0")
-  return `${yyyy}${mm}${dd}`
-}
-
-function googleCalendarUrl(event: Event) {
-  const start = new Date(event.event_date)
-  const end = new Date(start)
-  end.setDate(end.getDate() + 1)
-  const location = [event.venue_name, event.venue_address].filter(Boolean).join(", ")
-  const details = [event.description, event.ticket_url ? `Tickets: ${event.ticket_url}` : ""]
-    .filter(Boolean)
-    .join("\n\n")
-  const params = new URLSearchParams({
-    action: "TEMPLATE",
-    text: event.title,
-    dates: `${toCalendarDate(start)}/${toCalendarDate(end)}`,
-    location,
-    details,
-    ctz: "Europe/Vienna",
-  })
-  return `https://calendar.google.com/calendar/render?${params.toString()}`
-}
-
 function EventCard({ event, index }: { event: Event; index: number }) {
   const { ref, isInView } = useInView(0.1)
 
@@ -206,7 +180,7 @@ function EventCard({ event, index }: { event: Event; index: number }) {
           <div className="flex flex-wrap items-center gap-2 px-6 pb-5 md:px-8 md:pb-0">
             {!isPast && (
               <a
-                href={googleCalendarUrl(event)}
+                href={`/api/events/ics/${event.id}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-2 px-4 py-3 font-mono text-[11px] tracking-[0.15em] uppercase transition-all duration-300"
