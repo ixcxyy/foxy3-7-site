@@ -90,7 +90,8 @@ export default function AdminPage() {
       body: JSON.stringify({ username, password }),
     })
     if (!response.ok) {
-      setStatus("Login fehlgeschlagen.")
+      const body = await response.json().catch(() => ({}))
+      setStatus(body?.error ? `Login fehlgeschlagen: ${body.error}` : "Login fehlgeschlagen.")
       return
     }
     setPassword("")

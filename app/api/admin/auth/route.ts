@@ -4,10 +4,16 @@ import { cookies } from "next/headers"
 import crypto from "crypto"
 
 function getSql() {
-  if (!process.env.DATABASE_URL) {
-    throw new Error("DATABASE_URL is not configured")
+  const databaseUrl =
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.POSTGRES_PRISMA_URL ||
+    process.env.POSTGRES_URL_NON_POOLING
+
+  if (!databaseUrl) {
+    throw new Error("No database URL configured")
   }
-  return neon(process.env.DATABASE_URL)
+  return neon(databaseUrl)
 }
 
 function hashPassword(password: string): string {
@@ -73,7 +79,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error("Auth error:", error)
-    return NextResponse.json({ error: "Auth failed" }, { status: 500 })
+    const message = error instanceof Error ? error.message : "Auth failed"
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
 

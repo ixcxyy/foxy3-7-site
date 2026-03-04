@@ -2,10 +2,16 @@ import { neon } from "@neondatabase/serverless"
 import { NextResponse } from "next/server"
 
 function getSql() {
-  if (!process.env.DATABASE_URL) {
-    throw new Error("DATABASE_URL is not configured")
+  const databaseUrl =
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.POSTGRES_PRISMA_URL ||
+    process.env.POSTGRES_URL_NON_POOLING
+
+  if (!databaseUrl) {
+    throw new Error("No database URL configured")
   }
-  return neon(process.env.DATABASE_URL)
+  return neon(databaseUrl)
 }
 
 export async function GET() {
