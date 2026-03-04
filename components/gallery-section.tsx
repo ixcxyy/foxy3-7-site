@@ -6,29 +6,69 @@ import { useParallax, useInView } from "@/hooks/use-parallax"
 
 const galleryImages = [
   {
-    src: "https://www.foxy3-7.com/wp-content/uploads/2025/06/MLT_Redbox_Noiseflash_22032025_149_SW.jpg",
-    alt: "MLT am Schlagzeug",
+    src: "https://www.foxy3-7.com/wp-content/uploads/2025/06/PXL_20240302_170502708-2048x1536.jpg",
+    alt: "Foxy 3-7 Gallery 1",
     span: "col-span-2 row-span-2",
   },
   {
-    src: "https://www.foxy3-7.com/wp-content/uploads/2025/06/Grille_DSC_0682.jpg",
-    alt: "Grille - Keys und Gesang",
+    src: "https://www.foxy3-7.com/wp-content/uploads/2025/06/PXL_20240302_163914008-1536x2048.jpg",
+    alt: "Foxy 3-7 Gallery 2",
     span: "col-span-1 row-span-1",
   },
   {
-    src: "https://www.foxy3-7.com/wp-content/uploads/2025/06/Linus_SW2.jpg",
-    alt: "Knus an der Gitarre",
+    src: "https://www.foxy3-7.com/wp-content/uploads/2025/06/PXL_20240302_164434892-2048x1536.jpg",
+    alt: "Foxy 3-7 Gallery 3",
     span: "col-span-1 row-span-2",
   },
   {
-    src: "https://www.foxy3-7.com/wp-content/uploads/2025/06/Dege_IMG_0408_SW.jpg",
-    alt: "Dege am Bass",
+    src: "https://www.foxy3-7.com/wp-content/uploads/2025/06/Grille_Redbox_Noiseflash_22032025_146.jpg",
+    alt: "Foxy 3-7 Gallery 4",
     span: "col-span-1 row-span-1",
   },
   {
-    src: "https://www.foxy3-7.com/wp-content/uploads/2025/06/Dalton_Redbox_Noiseflash_22032025_145_SW.jpg",
-    alt: "Dalton an der Gitarre",
+    src: "https://www.foxy3-7.com/wp-content/uploads/2025/06/MLT_Redbox_Noiseflash_22032025_165.jpg",
+    alt: "Foxy 3-7 Gallery 5",
     span: "col-span-2 row-span-1",
+  },
+  {
+    src: "https://www.foxy3-7.com/wp-content/uploads/2025/06/Dege_IMG_0408.jpg",
+    alt: "Foxy 3-7 Gallery 6",
+    span: "col-span-1 row-span-1",
+  },
+  {
+    src: "https://www.foxy3-7.com/wp-content/uploads/2025/06/Dege_Redbox_Noiseflash_22032025_160.jpg",
+    alt: "Foxy 3-7 Gallery 7",
+    span: "col-span-1 row-span-1",
+  },
+  {
+    src: "https://www.foxy3-7.com/wp-content/uploads/2025/06/Two-1.jpg",
+    alt: "Foxy 3-7 Gallery 8",
+    span: "col-span-1 row-span-1",
+  },
+  {
+    src: "https://www.foxy3-7.com/wp-content/uploads/2025/06/Band_Redbox_Noiseflash_22032025_183.jpg",
+    alt: "Foxy 3-7 Gallery 9",
+    span: "col-span-1 row-span-1",
+  },
+  {
+    src: "https://www.foxy3-7.com/wp-content/uploads/2025/06/Three.jpg",
+    alt: "Foxy 3-7 Gallery 10",
+    span: "col-span-1 row-span-1",
+  },
+  {
+    src: "https://www.foxy3-7.com/wp-content/uploads/2025/06/Four.jpg",
+    alt: "Foxy 3-7 Gallery 11",
+    span: "col-span-1 row-span-1",
+  },
+  {
+    src: "https://www.foxy3-7.com/wp-content/uploads/2025/06/two.jpg",
+    alt: "Foxy 3-7 Gallery 12",
+    span: "col-span-1 row-span-1",
+  },
+  {
+    src: "https://www.foxy3-7.com/wp-content/uploads/2025/06/Dalton_Redbox_Noiseflash_22032025_145.jpg",
+    alt: "Foxy 3-7 Gallery 13",
+    span: "col-span-1 row-span-1",
   },
 ]
 

@@ -165,6 +165,46 @@ export function HeroSection() {
             {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
           </button>
         </div>
+        <div
+          className={`mt-5 flex flex-wrap items-center justify-center gap-3 transition-all duration-1000 delay-700 ease-out ${
+            isLoaded ? "translate-y-0 opacity-100" : "translate-y-8 opacity-0"
+          }`}
+        >
+          <a
+            href="https://open.spotify.com/intl-de/artist/3RLHej5PCmjNewORATx5KM"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-4 py-2 font-mono text-[10px] tracking-[0.2em] uppercase transition-colors duration-300"
+            style={{ color: "#e63946", border: "1px solid rgba(230,57,70,0.3)" }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = "#fff"
+              e.currentTarget.style.borderColor = "#e63946"
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = "#e63946"
+              e.currentTarget.style.borderColor = "rgba(230,57,70,0.3)"
+            }}
+          >
+            Spotify
+          </a>
+          <a
+            href="https://www.instagram.com/foxy_3.7/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-4 py-2 font-mono text-[10px] tracking-[0.2em] uppercase transition-colors duration-300"
+            style={{ color: "#e63946", border: "1px solid rgba(230,57,70,0.3)" }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = "#fff"
+              e.currentTarget.style.borderColor = "#e63946"
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = "#e63946"
+              e.currentTarget.style.borderColor = "rgba(230,57,70,0.3)"
+            }}
+          >
+            Instagram
+          </a>
+        </div>
       </div>
 
       {/* Scroll indicator */}

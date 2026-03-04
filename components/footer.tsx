@@ -76,6 +76,36 @@ export function Footer() {
             </p>
             <div className="flex flex-col gap-3">
               <a
+                href="https://open.spotify.com/intl-de/artist/3RLHej5PCmjNewORATx5KM"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm transition-all duration-300"
+                style={{ color: "#555" }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = "#e63946"
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = "#555"
+                }}
+              >
+                Spotify
+              </a>
+              <a
+                href="https://www.instagram.com/foxy_3.7/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm transition-all duration-300"
+                style={{ color: "#555" }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = "#e63946"
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = "#555"
+                }}
+              >
+                Instagram
+              </a>
+              <a
                 href="https://youtu.be/Jj4T9qE4VGo"
                 target="_blank"
                 rel="noopener noreferrer"
