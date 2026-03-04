@@ -53,6 +53,10 @@ async function ensureEventsSchema() {
       ticket_url VARCHAR(500),
       image_url VARCHAR(500),
       image_scale INTEGER DEFAULT 100,
+      image_pos_x INTEGER DEFAULT 0,
+      image_pos_y INTEGER DEFAULT 0,
+      image_width INTEGER DEFAULT 360,
+      image_height INTEGER DEFAULT 112,
       display_order INTEGER DEFAULT 0,
       is_published BOOLEAN DEFAULT true,
       created_at TIMESTAMP DEFAULT NOW(),
@@ -82,6 +86,10 @@ async function ensureEventsSchema() {
     ADD COLUMN IF NOT EXISTS ticket_url VARCHAR(500),
     ADD COLUMN IF NOT EXISTS image_url VARCHAR(500),
     ADD COLUMN IF NOT EXISTS image_scale INTEGER DEFAULT 100,
+    ADD COLUMN IF NOT EXISTS image_pos_x INTEGER DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS image_pos_y INTEGER DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS image_width INTEGER DEFAULT 360,
+    ADD COLUMN IF NOT EXISTS image_height INTEGER DEFAULT 112,
     ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0,
     ADD COLUMN IF NOT EXISTS is_published BOOLEAN DEFAULT true,
     ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW(),
@@ -100,6 +108,10 @@ async function ensureEventsSchema() {
       maps_url = COALESCE(maps_url, venue_link),
       ticket_url = COALESCE(ticket_url, ticket_link),
       image_scale = COALESCE(image_scale, 100),
+      image_pos_x = COALESCE(image_pos_x, 0),
+      image_pos_y = COALESCE(image_pos_y, 0),
+      image_width = COALESCE(image_width, 360),
+      image_height = COALESCE(image_height, 112),
       display_order = COALESCE(display_order, id)
     WHERE
       venue_name IS NULL
@@ -108,6 +120,10 @@ async function ensureEventsSchema() {
       OR maps_url IS NULL
       OR ticket_url IS NULL
       OR image_scale IS NULL
+      OR image_pos_x IS NULL
+      OR image_pos_y IS NULL
+      OR image_width IS NULL
+      OR image_height IS NULL
       OR display_order IS NULL
   `
 }
@@ -173,6 +189,10 @@ export async function POST(request: NextRequest) {
       maps_url,
       ticket_url,
       image_scale,
+      image_pos_x,
+      image_pos_y,
+      image_width,
+      image_height,
       is_published,
       uploaded_image,
     } = body
@@ -183,14 +203,19 @@ export async function POST(request: NextRequest) {
       INSERT INTO events (
         title, description, event_date,
         venue_name, venue_address, venue_url, maps_url, ticket_url,
-        image_scale, display_order,
+        image_scale, image_pos_x, image_pos_y, image_width, image_height, display_order,
         venue, venue_link, city, ticket_link,
         is_published
       )
       VALUES (
         ${title}, ${description || null}, ${event_date},
         ${venue_name}, ${venue_address || null}, ${venue_url || null}, ${maps_url || null}, ${ticket_url || null},
-        ${Math.max(50, Math.min(200, Number(image_scale) || 100))}, ${nextOrder[0].value},
+        ${Math.max(50, Math.min(200, Number(image_scale) || 100))},
+        ${Number.isFinite(Number(image_pos_x)) ? Number(image_pos_x) : 0},
+        ${Number.isFinite(Number(image_pos_y)) ? Number(image_pos_y) : 0},
+        ${Math.max(120, Number(image_width) || 360)},
+        ${Math.max(80, Number(image_height) || 112)},
+        ${nextOrder[0].value},
         ${venue_name}, ${maps_url || venue_url || null}, ${venue_address || null}, ${ticket_url || null},
         ${is_published ?? true}
       )
@@ -227,6 +252,10 @@ export async function PUT(request: NextRequest) {
       maps_url,
       ticket_url,
       image_scale,
+      image_pos_x,
+      image_pos_y,
+      image_width,
+      image_height,
       is_published,
       uploaded_image,
     } = body
@@ -242,6 +271,10 @@ export async function PUT(request: NextRequest) {
         maps_url = ${maps_url || null},
         ticket_url = ${ticket_url || null},
         image_scale = ${Math.max(50, Math.min(200, Number(image_scale) || 100))},
+        image_pos_x = ${Number.isFinite(Number(image_pos_x)) ? Number(image_pos_x) : 0},
+        image_pos_y = ${Number.isFinite(Number(image_pos_y)) ? Number(image_pos_y) : 0},
+        image_width = ${Math.max(120, Number(image_width) || 360)},
+        image_height = ${Math.max(80, Number(image_height) || 112)},
         venue = ${venue_name},
         venue_link = ${maps_url || venue_url || null},
         city = ${venue_address || null},

@@ -1,6 +1,6 @@
 "use client"
 
-import { FormEvent, useEffect, useMemo, useState } from "react"
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react"
 
 type AdminEvent = {
   id: number
@@ -14,6 +14,10 @@ type AdminEvent = {
   ticket_url: string | null
   image_url: string | null
   image_scale: number | null
+  image_pos_x: number | null
+  image_pos_y: number | null
+  image_width: number | null
+  image_height: number | null
   display_order: number | null
   is_published: boolean
 }
@@ -34,6 +38,10 @@ type EventForm = {
   maps_url: string
   ticket_url: string
   image_scale: number
+  image_pos_x: number
+  image_pos_y: number
+  image_width: number
+  image_height: number
   is_published: boolean
 }
 
@@ -48,6 +56,10 @@ const emptyForm: EventForm = {
   maps_url: "",
   ticket_url: "",
   image_scale: 100,
+  image_pos_x: 0,
+  image_pos_y: 0,
+  image_width: 360,
+  image_height: 112,
   is_published: true,
 }
 
@@ -96,6 +108,9 @@ export default function AdminPage() {
   const [reordering, setReordering] = useState(false)
   const [uploadedImage, setUploadedImage] = useState<UploadedImage | null>(null)
   const [uploadedImagePreview, setUploadedImagePreview] = useState<string | null>(null)
+  const [dragMode, setDragMode] = useState<"move" | "resize" | null>(null)
+  const [dragStart, setDragStart] = useState<{ x: number; y: number; px: number; py: number; w: number; h: number } | null>(null)
+  const previewCanvasRef = useRef<HTMLDivElement>(null)
 
   async function checkAuth() {
     setLoading(true)
@@ -232,6 +247,10 @@ export default function AdminPage() {
       maps_url: event.maps_url ?? "",
       ticket_url: event.ticket_url ?? "",
       image_scale: Math.max(50, Math.min(200, Number(event.image_scale) || 100)),
+      image_pos_x: Number(event.image_pos_x) || 0,
+      image_pos_y: Number(event.image_pos_y) || 0,
+      image_width: Math.max(120, Number(event.image_width) || 360),
+      image_height: Math.max(80, Number(event.image_height) || 112),
       is_published: Boolean(event.is_published),
     })
     setUploadedImage(null)
@@ -279,6 +298,38 @@ export default function AdminPage() {
     next[target] = temp
     await saveOrder(next)
   }
+
+  useEffect(() => {
+    if (!dragMode || !dragStart) return
+    const onMove = (e: MouseEvent) => {
+      const canvas = previewCanvasRef.current
+      if (!canvas) return
+      const rect = canvas.getBoundingClientRect()
+      const dx = e.clientX - dragStart.x
+      const dy = e.clientY - dragStart.y
+      if (dragMode === "move") {
+        const maxX = Math.max(0, rect.width - form.image_width)
+        const maxY = Math.max(0, rect.height - form.image_height)
+        const nextX = Math.max(0, Math.min(maxX, dragStart.px + dx))
+        const nextY = Math.max(0, Math.min(maxY, dragStart.py + dy))
+        setForm((p) => ({ ...p, image_pos_x: Math.round(nextX), image_pos_y: Math.round(nextY) }))
+      } else {
+        const nextW = Math.max(120, dragStart.w + dx)
+        const nextH = Math.max(80, dragStart.h + dy)
+        setForm((p) => ({ ...p, image_width: Math.round(nextW), image_height: Math.round(nextH) }))
+      }
+    }
+    const onUp = () => {
+      setDragMode(null)
+      setDragStart(null)
+    }
+    window.addEventListener("mousemove", onMove)
+    window.addEventListener("mouseup", onUp)
+    return () => {
+      window.removeEventListener("mousemove", onMove)
+      window.removeEventListener("mouseup", onUp)
+    }
+  }, [dragMode, dragStart, form.image_height, form.image_width])
 
   if (loading) {
     return (
@@ -423,22 +474,8 @@ export default function AdminPage() {
                 className="px-3 py-2 text-sm"
                 style={{ backgroundColor: "#090909", border: "1px solid #222", color: "#fff" }}
               />
-              <div className="flex items-center gap-3 px-3 py-2" style={{ backgroundColor: "#090909", border: "1px solid #222" }}>
-                <label className="font-mono text-[11px] uppercase tracking-[0.1em]" style={{ color: "#999" }}>
-                  Bildgroesse
-                </label>
-                <input
-                  type="range"
-                  min={50}
-                  max={200}
-                  step={5}
-                  value={form.image_scale}
-                  onChange={(e) => setForm((p) => ({ ...p, image_scale: Number(e.target.value) }))}
-                  className="flex-1"
-                />
-                <span className="font-mono text-xs" style={{ color: "#e63946" }}>
-                  {form.image_scale}%
-                </span>
+              <div className="px-3 py-2 text-xs md:col-span-2" style={{ backgroundColor: "#090909", border: "1px solid #222", color: "#888" }}>
+                Bild im Preview frei ziehen und unten rechts vergroessern/verkleinern.
               </div>
 
               <div className="md:col-span-2">
@@ -549,13 +586,57 @@ export default function AdminPage() {
                     )}
                   </div>
                   {previewImage && (
-                    <div style={{ width: `${Math.max(50, Math.min(200, form.image_scale))}%` }}>
-                      <img
-                        src={previewImage}
-                        alt="Event Preview"
-                        className="h-44 w-full object-cover"
-                        style={{ border: "1px solid #1f1f1f" }}
-                      />
+                    <div
+                      ref={previewCanvasRef}
+                      className="relative h-52 w-full overflow-hidden"
+                      style={{ border: "1px solid #1f1f1f" }}
+                    >
+                      <div
+                        className="absolute cursor-move overflow-hidden"
+                        style={{
+                          left: form.image_pos_x,
+                          top: form.image_pos_y,
+                          width: form.image_width,
+                          height: form.image_height,
+                          border: "1px solid rgba(230,57,70,0.6)",
+                        }}
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          setDragMode("move")
+                          setDragStart({
+                            x: e.clientX,
+                            y: e.clientY,
+                            px: form.image_pos_x,
+                            py: form.image_pos_y,
+                            w: form.image_width,
+                            h: form.image_height,
+                          })
+                        }}
+                      >
+                        <img
+                          src={previewImage}
+                          alt="Event Preview"
+                          className="h-full w-full object-cover"
+                          draggable={false}
+                        />
+                        <div
+                          className="absolute right-0 bottom-0 h-4 w-4 cursor-se-resize"
+                          style={{ backgroundColor: "#e63946" }}
+                          onMouseDown={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            setDragMode("resize")
+                            setDragStart({
+                              x: e.clientX,
+                              y: e.clientY,
+                              px: form.image_pos_x,
+                              py: form.image_pos_y,
+                              w: form.image_width,
+                              h: form.image_height,
+                            })
+                          }}
+                        />
+                      </div>
                     </div>
                   )}
                 </div>

@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react"
 import { Calendar, CalendarPlus, MapPin, ExternalLink, Ticket } from "lucide-react"
-import Image from "next/image"
 import { useInView } from "@/hooks/use-parallax"
 
 interface Event {
@@ -17,6 +16,10 @@ interface Event {
   ticket_url: string | null
   image_url: string | null
   image_scale: number | null
+  image_pos_x: number | null
+  image_pos_y: number | null
+  image_width: number | null
+  image_height: number | null
 }
 
 function toLocalDay(dateValue: string | Date) {
@@ -182,12 +185,18 @@ function EventCard({ event, index }: { event: Event; index: number }) {
                 className="relative mt-2 h-24 w-full overflow-hidden md:h-28"
                 style={{ border: "1px solid rgba(230,57,70,0.15)", maxWidth: "360px" }}
               >
-                <Image
+                <img
                   src={event.image_url}
                   alt={event.title}
-                  fill
-                  className="object-cover"
-                  sizes="(max-width: 768px) 100vw, 360px"
+                  className="absolute max-w-none"
+                  style={{
+                    left: Number(event.image_pos_x) || 0,
+                    top: Number(event.image_pos_y) || 0,
+                    width: Math.max(120, Number(event.image_width) || 360),
+                    height: Math.max(80, Number(event.image_height) || 112),
+                    objectFit: "cover",
+                  }}
+                  loading="lazy"
                 />
               </div>
             )}
@@ -244,7 +253,7 @@ export function EventsSection() {
   const { ref: headerRef, isInView: headerInView } = useInView(0.2)
 
   useEffect(() => {
-    fetch("/api/events")
+    fetch("/api/events", { cache: "no-store" })
       .then((r) => r.json())
       .then((data) => {
         if (Array.isArray(data)) setEvents(data)

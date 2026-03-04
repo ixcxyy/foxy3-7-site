@@ -35,6 +35,10 @@ async function ensurePublicEventsSchema() {
       ticket_url VARCHAR(500),
       image_url VARCHAR(500),
       image_scale INTEGER DEFAULT 100,
+      image_pos_x INTEGER DEFAULT 0,
+      image_pos_y INTEGER DEFAULT 0,
+      image_width INTEGER DEFAULT 360,
+      image_height INTEGER DEFAULT 112,
       display_order INTEGER DEFAULT 0,
       is_published BOOLEAN DEFAULT true,
       created_at TIMESTAMP DEFAULT NOW(),
@@ -53,6 +57,10 @@ async function ensurePublicEventsSchema() {
     ALTER TABLE events
     ADD COLUMN IF NOT EXISTS maps_url VARCHAR(500),
     ADD COLUMN IF NOT EXISTS image_scale INTEGER DEFAULT 100,
+    ADD COLUMN IF NOT EXISTS image_pos_x INTEGER DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS image_pos_y INTEGER DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS image_width INTEGER DEFAULT 360,
+    ADD COLUMN IF NOT EXISTS image_height INTEGER DEFAULT 112,
     ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0
   `
 }
@@ -74,11 +82,7 @@ export async function GET() {
       ...event,
       image_url: imageUrlFor(event.id, event.image_url, event.has_uploaded_image),
     }))
-    return NextResponse.json(normalized, {
-      headers: {
-        "Cache-Control": "public, s-maxage=120, stale-while-revalidate=600",
-      },
-    })
+    return NextResponse.json(normalized, { headers: { "Cache-Control": "no-store" } })
   } catch (error) {
     console.error("Failed to fetch events:", error)
     return NextResponse.json({ error: "Failed to fetch events" }, { status: 500 })
