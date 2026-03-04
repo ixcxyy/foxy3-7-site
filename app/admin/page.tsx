@@ -129,7 +129,8 @@ export default function AdminPage() {
     })
 
     if (!response.ok) {
-      setStatus("Speichern fehlgeschlagen.")
+      const body = await response.json().catch(() => ({}))
+      setStatus(body?.error ? `Speichern fehlgeschlagen: ${body.error}` : "Speichern fehlgeschlagen.")
       return
     }
 

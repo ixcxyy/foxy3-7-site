@@ -26,17 +26,70 @@ async function isAuthenticated() {
   return rows.length > 0
 }
 
+async function ensureEventsSchema() {
+  const sql = getSql()
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS events (
+      id SERIAL PRIMARY KEY,
+      title VARCHAR(255) NOT NULL,
+      description TEXT,
+      event_date DATE NOT NULL,
+      venue_name VARCHAR(255) NOT NULL,
+      venue_address VARCHAR(500),
+      venue_url VARCHAR(500),
+      ticket_url VARCHAR(500),
+      image_url VARCHAR(500),
+      is_published BOOLEAN DEFAULT true,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `
+
+  await sql`
+    ALTER TABLE events
+    ADD COLUMN IF NOT EXISTS venue VARCHAR(255),
+    ADD COLUMN IF NOT EXISTS venue_link VARCHAR(500),
+    ADD COLUMN IF NOT EXISTS city VARCHAR(255),
+    ADD COLUMN IF NOT EXISTS ticket_link VARCHAR(500),
+    ADD COLUMN IF NOT EXISTS venue_name VARCHAR(255),
+    ADD COLUMN IF NOT EXISTS venue_address VARCHAR(500),
+    ADD COLUMN IF NOT EXISTS venue_url VARCHAR(500),
+    ADD COLUMN IF NOT EXISTS ticket_url VARCHAR(500),
+    ADD COLUMN IF NOT EXISTS image_url VARCHAR(500),
+    ADD COLUMN IF NOT EXISTS is_published BOOLEAN DEFAULT true,
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW(),
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()
+  `
+
+  await sql`
+    UPDATE events
+    SET
+      venue_name = COALESCE(venue_name, venue),
+      venue_address = COALESCE(venue_address, city),
+      venue_url = COALESCE(venue_url, venue_link),
+      ticket_url = COALESCE(ticket_url, ticket_link)
+    WHERE
+      venue_name IS NULL
+      OR venue_address IS NULL
+      OR venue_url IS NULL
+      OR ticket_url IS NULL
+  `
+}
+
 export async function GET() {
   if (!(await isAuthenticated())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
   try {
+    await ensureEventsSchema()
     const sql = getSql()
     const events = await sql`SELECT * FROM events ORDER BY event_date ASC`
     return NextResponse.json(events)
   } catch (error) {
     console.error("Failed to fetch events:", error)
-    return NextResponse.json({ error: "Failed to fetch events" }, { status: 500 })
+    const message = error instanceof Error ? error.message : "Failed to fetch events"
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
 
@@ -45,6 +98,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
   try {
+    await ensureEventsSchema()
     const sql = getSql()
     const body = await request.json()
     const { title, description, event_date, venue_name, venue_address, venue_url, ticket_url, image_url, is_published } = body
@@ -57,7 +111,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result[0], { status: 201 })
   } catch (error) {
     console.error("Failed to create event:", error)
-    return NextResponse.json({ error: "Failed to create event" }, { status: 500 })
+    const message = error instanceof Error ? error.message : "Failed to create event"
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
 
@@ -66,6 +121,7 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
   try {
+    await ensureEventsSchema()
     const sql = getSql()
     const body = await request.json()
     const { id, title, description, event_date, venue_name, venue_address, venue_url, ticket_url, image_url, is_published } = body
@@ -88,7 +144,8 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json(result[0])
   } catch (error) {
     console.error("Failed to update event:", error)
-    return NextResponse.json({ error: "Failed to update event" }, { status: 500 })
+    const message = error instanceof Error ? error.message : "Failed to update event"
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
 
@@ -106,6 +163,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error("Failed to delete event:", error)
-    return NextResponse.json({ error: "Failed to delete event" }, { status: 500 })
+    const message = error instanceof Error ? error.message : "Failed to delete event"
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
