@@ -23,6 +23,16 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="de">
+      <head>
+        <link rel="dns-prefetch" href="//open.spotify.com" />
+        <link rel="dns-prefetch" href="//www.instagram.com" />
+        <link rel="dns-prefetch" href="//www.youtube.com" />
+        <link rel="dns-prefetch" href="//calendar.google.com" />
+        <link rel="preconnect" href="https://open.spotify.com" crossOrigin="" />
+        <link rel="preconnect" href="https://www.instagram.com" crossOrigin="" />
+        <link rel="preconnect" href="https://www.youtube.com" crossOrigin="" />
+        <link rel="preconnect" href="https://calendar.google.com" crossOrigin="" />
+      </head>
       <body className={`${_inter.variable} ${_spaceMono.variable} font-sans antialiased`} style={{ backgroundColor: "#0a0a0a", color: "#f0f0f0" }}>
         {children}
         <Analytics />
