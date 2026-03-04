@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useState, useRef, MouseEvent } from "react"
-import { Calendar, MapPin, ExternalLink, Ticket } from "lucide-react"
+import { useEffect, useState } from "react"
+import { Calendar, CalendarPlus, MapPin, ExternalLink, Ticket } from "lucide-react"
 import Image from "next/image"
 import { useInView } from "@/hooks/use-parallax"
 
@@ -19,29 +19,46 @@ interface Event {
   image_scale: number | null
 }
 
+function toLocalDay(dateValue: string | Date) {
+  const d = new Date(dateValue)
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
+function toCalendarDate(date: Date) {
+  const yyyy = date.getUTCFullYear()
+  const mm = String(date.getUTCMonth() + 1).padStart(2, "0")
+  const dd = String(date.getUTCDate()).padStart(2, "0")
+  return `${yyyy}${mm}${dd}`
+}
+
+function googleCalendarUrl(event: Event) {
+  const start = new Date(event.event_date)
+  const end = new Date(start)
+  end.setDate(end.getDate() + 1)
+  const location = [event.venue_name, event.venue_address].filter(Boolean).join(", ")
+  const details = [event.description, event.ticket_url ? `Tickets: ${event.ticket_url}` : ""]
+    .filter(Boolean)
+    .join("\n\n")
+  const params = new URLSearchParams({
+    action: "TEMPLATE",
+    text: event.title,
+    dates: `${toCalendarDate(start)}/${toCalendarDate(end)}`,
+    location,
+    details,
+    ctz: "Europe/Vienna",
+  })
+  return `https://calendar.google.com/calendar/render?${params.toString()}`
+}
+
 function EventCard({ event, index }: { event: Event; index: number }) {
-  const cardRef = useRef<HTMLDivElement>(null)
-  const [transform, setTransform] = useState("")
   const { ref, isInView } = useInView(0.1)
-
-  const handleMouseMove = (e: MouseEvent<HTMLDivElement>) => {
-    const card = cardRef.current
-    if (!card) return
-    const rect = card.getBoundingClientRect()
-    const x = (e.clientX - rect.left) / rect.width - 0.5
-    const y = (e.clientY - rect.top) / rect.height - 0.5
-    setTransform(`perspective(800px) rotateY(${x * 10}deg) rotateX(${-y * 10}deg) scale3d(1.02,1.02,1.02)`)
-  }
-
-  const handleMouseLeave = () => {
-    setTransform("perspective(800px) rotateX(0deg) rotateY(0deg) scale3d(1,1,1)")
-  }
 
   const date = new Date(event.event_date)
   const day = date.getDate()
   const month = date.toLocaleDateString("de-AT", { month: "short" }).toUpperCase()
   const year = date.getFullYear()
-  const isPast = date < new Date()
+  const isPast = toLocalDay(event.event_date) < toLocalDay(new Date())
 
   return (
     <div
@@ -52,17 +69,20 @@ function EventCard({ event, index }: { event: Event; index: number }) {
       style={{ transitionDelay: `${index * 150}ms` }}
     >
       <div
-        ref={cardRef}
         className="group relative overflow-hidden"
         style={{
-          transform,
-          transition: "transform 0.15s ease-out",
-          transformStyle: "preserve-3d",
+          transition: "transform 0.2s ease-out, box-shadow 0.2s ease-out",
           backgroundColor: "#0f0f0f",
           border: "1px solid rgba(230,57,70,0.1)",
         }}
-        onMouseMove={handleMouseMove}
-        onMouseLeave={handleMouseLeave}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = "translateY(-2px)"
+          e.currentTarget.style.boxShadow = "0 12px 36px rgba(0,0,0,0.35)"
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = "translateY(0)"
+          e.currentTarget.style.boxShadow = "none"
+        }}
       >
         {/* Red accent top line */}
         <div
@@ -156,10 +176,41 @@ function EventCard({ event, index }: { event: Event; index: number }) {
                 </span>
               )}
             </div>
+
+            {event.image_url && (
+              <div
+                className="relative mt-2 h-24 w-full overflow-hidden md:h-28"
+                style={{ border: "1px solid rgba(230,57,70,0.15)", maxWidth: "360px" }}
+              >
+                <Image
+                  src={event.image_url}
+                  alt={event.title}
+                  fill
+                  className="object-cover"
+                  sizes="(max-width: 768px) 100vw, 360px"
+                />
+              </div>
+            )}
           </div>
 
           {/* Ticket CTA */}
-          <div className="flex items-center px-6 pb-5 md:px-8 md:pb-0">
+          <div className="flex flex-wrap items-center gap-2 px-6 pb-5 md:px-8 md:pb-0">
+            {!isPast && (
+              <a
+                href={googleCalendarUrl(event)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 px-4 py-3 font-mono text-[11px] tracking-[0.15em] uppercase transition-all duration-300"
+                style={{
+                  color: "#fff",
+                  backgroundColor: "rgba(255,255,255,0.06)",
+                  border: "1px solid rgba(255,255,255,0.18)",
+                }}
+              >
+                <CalendarPlus size={14} />
+                Zum Kalender
+              </a>
+            )}
             {event.ticket_url && !isPast ? (
               <a
                 href={event.ticket_url}
@@ -170,18 +221,6 @@ function EventCard({ event, index }: { event: Event; index: number }) {
                   color: "#fff",
                   backgroundColor: "rgba(230,57,70,0.15)",
                   border: "1px solid rgba(230,57,70,0.4)",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = "#e63946"
-                  e.currentTarget.style.borderColor = "#e63946"
-                  e.currentTarget.style.transform = "translateY(-2px)"
-                  e.currentTarget.style.boxShadow = "0 6px 24px rgba(230,57,70,0.3)"
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = "rgba(230,57,70,0.15)"
-                  e.currentTarget.style.borderColor = "rgba(230,57,70,0.4)"
-                  e.currentTarget.style.transform = "translateY(0)"
-                  e.currentTarget.style.boxShadow = "none"
                 }}
               >
                 <Ticket size={14} />
@@ -194,25 +233,6 @@ function EventCard({ event, index }: { event: Event; index: number }) {
             ) : null}
           </div>
         </div>
-
-        {/* Image preview if present */}
-        {event.image_url && (
-          <div
-            className="relative hidden min-h-[200px] lg:block"
-            style={{
-              width: `${Math.max(50, Math.min(200, Number(event.image_scale) || 100)) * 1.8}px`,
-              borderLeft: "1px solid rgba(230,57,70,0.1)",
-            }}
-          >
-            <Image
-              src={event.image_url}
-              alt={event.title}
-              fill
-              className="object-cover opacity-70 transition-opacity duration-500 group-hover:opacity-90"
-              sizes="(max-width: 1024px) 0px, 240px"
-            />
-          </div>
-        )}
       </div>
     </div>
   )
@@ -233,13 +253,7 @@ export function EventsSection() {
       .catch(() => setLoading(false))
   }, [])
 
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const toLocalDay = (dateValue: string) => {
-    const d = new Date(dateValue)
-    d.setHours(0, 0, 0, 0)
-    return d
-  }
+  const today = toLocalDay(new Date())
 
   const upcomingEvents = events.filter((e) => toLocalDay(e.event_date) >= today)
   const pastEvents = events.filter((e) => toLocalDay(e.event_date) < today)
