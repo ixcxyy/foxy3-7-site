@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS events (
   venue_name VARCHAR(255) NOT NULL,
   venue_address VARCHAR(500),
   venue_url VARCHAR(500),
+  maps_url VARCHAR(500),
   ticket_url VARCHAR(500),
   image_url VARCHAR(500),
   is_published BOOLEAN DEFAULT true,

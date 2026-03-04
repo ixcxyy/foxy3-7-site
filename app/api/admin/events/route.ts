@@ -38,6 +38,7 @@ async function ensureEventsSchema() {
       venue_name VARCHAR(255) NOT NULL,
       venue_address VARCHAR(500),
       venue_url VARCHAR(500),
+      maps_url VARCHAR(500),
       ticket_url VARCHAR(500),
       image_url VARCHAR(500),
       is_published BOOLEAN DEFAULT true,
@@ -55,6 +56,7 @@ async function ensureEventsSchema() {
     ADD COLUMN IF NOT EXISTS venue_name VARCHAR(255),
     ADD COLUMN IF NOT EXISTS venue_address VARCHAR(500),
     ADD COLUMN IF NOT EXISTS venue_url VARCHAR(500),
+    ADD COLUMN IF NOT EXISTS maps_url VARCHAR(500),
     ADD COLUMN IF NOT EXISTS ticket_url VARCHAR(500),
     ADD COLUMN IF NOT EXISTS image_url VARCHAR(500),
     ADD COLUMN IF NOT EXISTS is_published BOOLEAN DEFAULT true,
@@ -62,17 +64,22 @@ async function ensureEventsSchema() {
     ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()
   `
 
+  await sql`ALTER TABLE events ALTER COLUMN venue DROP NOT NULL`
+  await sql`ALTER TABLE events ALTER COLUMN city DROP NOT NULL`
+
   await sql`
     UPDATE events
     SET
       venue_name = COALESCE(venue_name, venue),
       venue_address = COALESCE(venue_address, city),
       venue_url = COALESCE(venue_url, venue_link),
+      maps_url = COALESCE(maps_url, venue_link),
       ticket_url = COALESCE(ticket_url, ticket_link)
     WHERE
       venue_name IS NULL
       OR venue_address IS NULL
       OR venue_url IS NULL
+      OR maps_url IS NULL
       OR ticket_url IS NULL
   `
 }
@@ -101,11 +108,21 @@ export async function POST(request: NextRequest) {
     await ensureEventsSchema()
     const sql = getSql()
     const body = await request.json()
-    const { title, description, event_date, venue_name, venue_address, venue_url, ticket_url, image_url, is_published } = body
+    const { title, description, event_date, venue_name, venue_address, venue_url, maps_url, ticket_url, image_url, is_published } = body
 
     const result = await sql`
-      INSERT INTO events (title, description, event_date, venue_name, venue_address, venue_url, ticket_url, image_url, is_published)
-      VALUES (${title}, ${description || null}, ${event_date}, ${venue_name}, ${venue_address || null}, ${venue_url || null}, ${ticket_url || null}, ${image_url || null}, ${is_published ?? true})
+      INSERT INTO events (
+        title, description, event_date,
+        venue_name, venue_address, venue_url, maps_url, ticket_url, image_url,
+        venue, venue_link, city, ticket_link,
+        is_published
+      )
+      VALUES (
+        ${title}, ${description || null}, ${event_date},
+        ${venue_name}, ${venue_address || null}, ${venue_url || null}, ${maps_url || null}, ${ticket_url || null}, ${image_url || null},
+        ${venue_name}, ${maps_url || venue_url || null}, ${venue_address || null}, ${ticket_url || null},
+        ${is_published ?? true}
+      )
       RETURNING *
     `
     return NextResponse.json(result[0], { status: 201 })
@@ -124,7 +141,7 @@ export async function PUT(request: NextRequest) {
     await ensureEventsSchema()
     const sql = getSql()
     const body = await request.json()
-    const { id, title, description, event_date, venue_name, venue_address, venue_url, ticket_url, image_url, is_published } = body
+    const { id, title, description, event_date, venue_name, venue_address, venue_url, maps_url, ticket_url, image_url, is_published } = body
 
     const result = await sql`
       UPDATE events SET
@@ -134,8 +151,13 @@ export async function PUT(request: NextRequest) {
         venue_name = ${venue_name},
         venue_address = ${venue_address || null},
         venue_url = ${venue_url || null},
+        maps_url = ${maps_url || null},
         ticket_url = ${ticket_url || null},
         image_url = ${image_url || null},
+        venue = ${venue_name},
+        venue_link = ${maps_url || venue_url || null},
+        city = ${venue_address || null},
+        ticket_link = ${ticket_url || null},
         is_published = ${is_published ?? true},
         updated_at = NOW()
       WHERE id = ${id}

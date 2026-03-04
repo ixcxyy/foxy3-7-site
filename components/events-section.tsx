@@ -12,6 +12,7 @@ interface Event {
   venue_name: string
   venue_address: string | null
   venue_url: string | null
+  maps_url: string | null
   ticket_url: string | null
   image_url: string | null
 }
@@ -133,6 +134,20 @@ function EventCard({ event, index }: { event: Event; index: number }) {
                   </span>
                 )}
               </div>
+              {event.maps_url && (
+                <a
+                  href={event.maps_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono text-[11px] transition-colors duration-300"
+                  style={{ color: "#777" }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = "#e63946" }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = "#777" }}
+                >
+                  Google Maps
+                  <ExternalLink size={10} className="ml-1 inline-block" />
+                </a>
+              )}
               {event.venue_address && (
                 <span className="hidden font-mono text-[10px] md:inline-block" style={{ color: "#555" }}>
                   {event.venue_address}
