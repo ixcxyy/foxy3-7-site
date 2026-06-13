@@ -75,31 +75,64 @@ function clampPercent(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)))
 }
 
+// Keep client output under the server's 2 MB cap with headroom.
+const MAX_IMAGE_BYTES = 1_900_000
+
+function canEncodeWebp(): boolean {
+  if (typeof document === "undefined") return false
+  const c = document.createElement("canvas")
+  c.width = 1
+  c.height = 1
+  return c.toDataURL("image/webp").startsWith("data:image/webp")
+}
+
+function approxBytesOfBase64(base64: string): number {
+  return Math.ceil((base64.length * 3) / 4)
+}
+
 async function fileToOptimizedBase64(file: File): Promise<UploadedImage> {
   const bitmap = await createImageBitmap(file)
-  const maxWidth = 1600
-  const width = bitmap.width > maxWidth ? maxWidth : bitmap.width
-  const height = Math.round((bitmap.height * width) / bitmap.width)
+  // Allow a higher resolution than before so the full-width banner stays sharp
+  // even when zoomed in via the focal-point editor.
+  const maxWidth = 2200
+  const ratio = bitmap.width > maxWidth ? maxWidth / bitmap.width : 1
+  const width = Math.max(1, Math.round(bitmap.width * ratio))
+  const height = Math.max(1, Math.round(bitmap.height * ratio))
 
   const canvas = document.createElement("canvas")
   canvas.width = width
   canvas.height = height
   const ctx = canvas.getContext("2d")
   if (!ctx) throw new Error("Bild konnte nicht verarbeitet werden")
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = "high"
   ctx.drawImage(bitmap, 0, 0, width, height)
+  bitmap.close?.()
 
-  const mimeType = file.type === "image/png" ? "image/png" : "image/jpeg"
-  const quality = mimeType === "image/jpeg" ? 0.82 : undefined
-  const dataUrl = canvas.toDataURL(mimeType, quality)
-  const base64 = dataUrl.split(",")[1] || ""
-  if (!base64) throw new Error("Bild konnte nicht kodiert werden")
+  // Prefer WebP: noticeably better quality per byte than JPEG and it keeps
+  // transparency. Fall back to PNG for transparent sources, else JPEG.
+  const isPng = file.type === "image/png"
+  const mimeType = canEncodeWebp() ? "image/webp" : isPng ? "image/png" : "image/jpeg"
 
-  const approxBytes = Math.ceil((base64.length * 3) / 4)
-  if (approxBytes > 1_900_000) {
-    throw new Error("Bild ist zu gross. Bitte ein kleineres Bild waehlen.")
+  if (mimeType === "image/png") {
+    const base64 = canvas.toDataURL("image/png").split(",")[1] || ""
+    if (!base64) throw new Error("Bild konnte nicht kodiert werden")
+    if (approxBytesOfBase64(base64) > MAX_IMAGE_BYTES) {
+      throw new Error("PNG ist zu gross. Bitte als JPEG/WebP speichern oder kleiner waehlen.")
+    }
+    return { base64, mimeType }
   }
 
-  return { base64, mimeType }
+  // Start at high quality and only step down if the encoded image is too large.
+  for (const quality of [0.94, 0.9, 0.86, 0.82, 0.76, 0.7, 0.6]) {
+    const base64 = canvas.toDataURL(mimeType, quality).split(",")[1] || ""
+    if (!base64) continue
+    if (approxBytesOfBase64(base64) <= MAX_IMAGE_BYTES) {
+      return { base64, mimeType }
+    }
+  }
+
+  throw new Error("Bild ist zu gross. Bitte ein kleineres Bild waehlen.")
 }
 
 const inputStyle = { backgroundColor: "#090909", border: "1px solid #222", color: "#fff" } as const

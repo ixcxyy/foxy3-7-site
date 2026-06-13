@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { Calendar, CalendarPlus, MapPin, ExternalLink, Ticket } from "lucide-react"
-import { useInView } from "@/hooks/use-parallax"
+import { useInView, useParallaxOffset } from "@/hooks/use-parallax"
 import { eventImageStyle } from "@/lib/event-image"
 
 interface Event {
@@ -29,6 +29,7 @@ function toLocalDay(dateValue: string | Date) {
 
 function EventCard({ event, index }: { event: Event; index: number }) {
   const { ref, isInView } = useInView(0.1)
+  const { ref: bannerRef, offset: parallaxOffset } = useParallaxOffset(8)
 
   const date = new Date(event.event_date)
   const day = date.getDate()
@@ -66,22 +67,34 @@ function EventCard({ event, index }: { event: Event; index: number }) {
           style={{ backgroundColor: "#e63946" }}
         />
 
-        {/* Event image banner */}
+        {/* Event image banner with scroll parallax */}
         {event.image_url && (
           <div
+            ref={bannerRef}
             className="relative w-full overflow-hidden"
             style={{ aspectRatio: "21 / 9", borderBottom: "1px solid rgba(230,57,70,0.15)" }}
           >
-            <img
-              src={event.image_url}
-              alt={event.title}
-              className="h-full w-full object-cover"
+            {/* Oversized inner layer (120% height) so the parallax shift never
+                reveals the container edges. */}
+            <div
+              className="absolute inset-x-0 will-change-transform"
               style={{
-                ...eventImageStyle(event),
-                filter: isPast ? "grayscale(70%) brightness(0.55)" : undefined,
+                top: "-10%",
+                height: "120%",
+                transform: `translate3d(0, ${parallaxOffset}%, 0)`,
               }}
-              loading="lazy"
-            />
+            >
+              <img
+                src={event.image_url}
+                alt={event.title}
+                className="h-full w-full object-cover"
+                style={{
+                  ...eventImageStyle(event),
+                  filter: isPast ? "grayscale(70%) brightness(0.55)" : undefined,
+                }}
+                loading="lazy"
+              />
+            </div>
             <div
               className="pointer-events-none absolute inset-0"
               style={{ background: "linear-gradient(to top, rgba(10,10,10,0.55), transparent 45%)" }}
