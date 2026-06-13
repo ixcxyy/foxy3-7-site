@@ -1,40 +1,119 @@
-import { neon } from "@neondatabase/serverless"
 import { NextRequest, NextResponse } from "next/server"
-import { cookies } from "next/headers"
+import { getSql } from "@/lib/db"
+import { ensureAdminSchema, getAuthenticatedAdmin, isSameOrigin } from "@/lib/admin-auth"
 
 type UploadedImage = {
   base64: string
   mimeType: string
 }
 
-function getSql() {
-  const databaseUrl =
-    process.env.DATABASE_URL ||
-    process.env.POSTGRES_URL ||
-    process.env.POSTGRES_PRISMA_URL ||
-    process.env.POSTGRES_URL_NON_POOLING
+const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"])
+// ~2 MB of raw image data once base64 is decoded
+const MAX_IMAGE_BASE64_LENGTH = 2_800_000
 
-  if (!databaseUrl) {
-    throw new Error("No database URL configured")
-  }
-  return neon(databaseUrl)
-}
-
-async function isAuthenticated() {
-  const sql = getSql()
-  const cookieStore = await cookies()
-  const session = cookieStore.get("admin_session")
-  if (!session?.value) return false
-  const rows = await sql`
-    SELECT id FROM admin_users WHERE id::text = ${session.value}
-  `
-  return rows.length > 0
-}
-
-function imageUrlFor(eventId: number, externalUrl: string | null, hasUploadedImage: boolean) {
+function imageUrlFor(eventId: number, externalUrl: string | null, imageUpdatedAt: string | null) {
   if (externalUrl) return externalUrl
-  if (hasUploadedImage) return `/api/events/image/${eventId}`
+  if (imageUpdatedAt) return `/api/events/image/${eventId}?v=${new Date(imageUpdatedAt).getTime()}`
   return null
+}
+
+function cleanText(value: unknown, maxLength: number): string | null {
+  if (typeof value !== "string") return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  return trimmed.slice(0, maxLength)
+}
+
+function cleanUrl(value: unknown): string | null {
+  const text = cleanText(value, 500)
+  if (!text) return null
+  try {
+    const url = new URL(text)
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null
+    return url.toString().slice(0, 500)
+  } catch {
+    return null
+  }
+}
+
+function cleanDate(value: unknown): string | null {
+  if (typeof value !== "string") return null
+  const match = value.trim().slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(match)) return null
+  return match
+}
+
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return fallback
+  return Math.round(Math.max(min, Math.min(max, num)))
+}
+
+type ValidatedEvent = {
+  title: string
+  description: string | null
+  event_date: string
+  venue_name: string
+  venue_address: string | null
+  venue_url: string | null
+  maps_url: string | null
+  ticket_url: string | null
+  image_scale: number
+  image_pos_x: number
+  image_pos_y: number
+  is_published: boolean
+  uploaded_image: UploadedImage | null
+  remove_image: boolean
+}
+
+function validateEventBody(body: Record<string, unknown>): { event: ValidatedEvent } | { error: string } {
+  const title = cleanText(body.title, 255)
+  const event_date = cleanDate(body.event_date)
+  const venue_name = cleanText(body.venue_name, 255)
+  if (!title) return { error: "Titel ist erforderlich" }
+  if (!event_date) return { error: "Datum ist erforderlich (JJJJ-MM-TT)" }
+  if (!venue_name) return { error: "Venue Name ist erforderlich" }
+
+  for (const field of ["venue_url", "maps_url", "ticket_url"] as const) {
+    if (cleanText(body[field], 500) && !cleanUrl(body[field])) {
+      return { error: `${field} muss eine gueltige http(s) URL sein` }
+    }
+  }
+
+  let uploaded_image: UploadedImage | null = null
+  const rawImage = body.uploaded_image as UploadedImage | null | undefined
+  if (rawImage && typeof rawImage === "object") {
+    const mimeType = typeof rawImage.mimeType === "string" ? rawImage.mimeType : ""
+    const base64 = typeof rawImage.base64 === "string" ? rawImage.base64 : ""
+    if (!ALLOWED_IMAGE_TYPES.has(mimeType)) {
+      return { error: "Bildformat nicht erlaubt (nur JPEG, PNG, WebP)" }
+    }
+    if (!base64 || base64.length > MAX_IMAGE_BASE64_LENGTH || !/^[A-Za-z0-9+/=]+$/.test(base64)) {
+      return { error: "Bild ist zu gross oder ungueltig (max. 2 MB)" }
+    }
+    uploaded_image = { base64, mimeType }
+  }
+
+  return {
+    event: {
+      title,
+      description: cleanText(body.description, 5000),
+      event_date,
+      venue_name,
+      venue_address: cleanText(body.venue_address, 500),
+      venue_url: cleanUrl(body.venue_url),
+      maps_url: cleanUrl(body.maps_url),
+      ticket_url: cleanUrl(body.ticket_url),
+      // image_pos_x / image_pos_y store the focal point of the image in percent
+      // (50/50 = centered), image_scale is the zoom in percent.
+      image_scale: clampInt(body.image_scale, 100, 300, 100),
+      image_pos_x: clampInt(body.image_pos_x, 0, 100, 50),
+      image_pos_y: clampInt(body.image_pos_y, 0, 100, 50),
+      is_published: body.is_published !== false,
+      uploaded_image,
+      remove_image: body.remove_image === true,
+    },
+  }
 }
 
 async function ensureEventsSchema() {
@@ -53,8 +132,8 @@ async function ensureEventsSchema() {
       ticket_url VARCHAR(500),
       image_url VARCHAR(500),
       image_scale INTEGER DEFAULT 100,
-      image_pos_x INTEGER DEFAULT 0,
-      image_pos_y INTEGER DEFAULT 0,
+      image_pos_x INTEGER DEFAULT 50,
+      image_pos_y INTEGER DEFAULT 50,
       image_width INTEGER DEFAULT 360,
       image_height INTEGER DEFAULT 112,
       display_order INTEGER DEFAULT 0,
@@ -83,11 +162,10 @@ async function ensureEventsSchema() {
     ADD COLUMN IF NOT EXISTS venue_address VARCHAR(500),
     ADD COLUMN IF NOT EXISTS venue_url VARCHAR(500),
     ADD COLUMN IF NOT EXISTS maps_url VARCHAR(500),
-    ADD COLUMN IF NOT EXISTS ticket_url VARCHAR(500),
     ADD COLUMN IF NOT EXISTS image_url VARCHAR(500),
     ADD COLUMN IF NOT EXISTS image_scale INTEGER DEFAULT 100,
-    ADD COLUMN IF NOT EXISTS image_pos_x INTEGER DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS image_pos_y INTEGER DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS image_pos_x INTEGER DEFAULT 50,
+    ADD COLUMN IF NOT EXISTS image_pos_y INTEGER DEFAULT 50,
     ADD COLUMN IF NOT EXISTS image_width INTEGER DEFAULT 360,
     ADD COLUMN IF NOT EXISTS image_height INTEGER DEFAULT 112,
     ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0,
@@ -107,29 +185,27 @@ async function ensureEventsSchema() {
       venue_url = COALESCE(venue_url, venue_link),
       maps_url = COALESCE(maps_url, venue_link),
       ticket_url = COALESCE(ticket_url, ticket_link),
-      image_scale = COALESCE(image_scale, 100),
-      image_pos_x = COALESCE(image_pos_x, 0),
-      image_pos_y = COALESCE(image_pos_y, 0),
-      image_width = COALESCE(image_width, 360),
-      image_height = COALESCE(image_height, 112),
       display_order = COALESCE(display_order, id)
     WHERE
       venue_name IS NULL
-      OR venue_address IS NULL
-      OR venue_url IS NULL
-      OR maps_url IS NULL
-      OR ticket_url IS NULL
-      OR image_scale IS NULL
-      OR image_pos_x IS NULL
-      OR image_pos_y IS NULL
-      OR image_width IS NULL
-      OR image_height IS NULL
       OR display_order IS NULL
   `
 }
 
+async function requireAdmin(request?: NextRequest): Promise<NextResponse | null> {
+  if (request && !isSameOrigin(request)) {
+    return NextResponse.json({ error: "Ungueltige Anfrage" }, { status: 403 })
+  }
+  await ensureAdminSchema()
+  const admin = await getAuthenticatedAdmin()
+  if (!admin) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+  return null
+}
+
 async function upsertUploadedImage(eventId: number, uploadedImage: UploadedImage | null) {
-  if (!uploadedImage?.base64 || !uploadedImage?.mimeType) return
+  if (!uploadedImage) return
   const sql = getSql()
   await sql`
     INSERT INTO event_images (event_id, mime_type, data_base64, updated_at)
@@ -143,16 +219,13 @@ async function upsertUploadedImage(eventId: number, uploadedImage: UploadedImage
 }
 
 export async function GET() {
-  if (!(await isAuthenticated())) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
   try {
+    const denied = await requireAdmin()
+    if (denied) return denied
     await ensureEventsSchema()
     const sql = getSql()
     const events = await sql`
-      SELECT
-        e.*,
-        CASE WHEN ei.event_id IS NULL THEN false ELSE true END AS has_uploaded_image
+      SELECT e.*, ei.updated_at AS image_updated_at
       FROM events e
       LEFT JOIN event_images ei ON ei.event_id = e.id
       ORDER BY e.display_order ASC, e.event_date ASC, e.id ASC
@@ -160,42 +233,28 @@ export async function GET() {
 
     const normalized = events.map((event) => ({
       ...event,
-      image_url: imageUrlFor(event.id, event.image_url, event.has_uploaded_image),
+      image_url: imageUrlFor(event.id, event.image_url, event.image_updated_at),
     }))
 
     return NextResponse.json(normalized)
   } catch (error) {
     console.error("Failed to fetch events:", error)
-    const message = error instanceof Error ? error.message : "Failed to fetch events"
-    return NextResponse.json({ error: message }, { status: 500 })
+    return NextResponse.json({ error: "Events konnten nicht geladen werden" }, { status: 500 })
   }
 }
 
 export async function POST(request: NextRequest) {
-  if (!(await isAuthenticated())) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
   try {
+    const denied = await requireAdmin(request)
+    if (denied) return denied
     await ensureEventsSchema()
     const sql = getSql()
-    const body = await request.json()
-    const {
-      title,
-      description,
-      event_date,
-      venue_name,
-      venue_address,
-      venue_url,
-      maps_url,
-      ticket_url,
-      image_scale,
-      image_pos_x,
-      image_pos_y,
-      image_width,
-      image_height,
-      is_published,
-      uploaded_image,
-    } = body
+    const body = await request.json().catch(() => ({}))
+    const validated = validateEventBody(body)
+    if ("error" in validated) {
+      return NextResponse.json({ error: validated.error }, { status: 400 })
+    }
+    const ev = validated.event
 
     const nextOrder = await sql`SELECT COALESCE(MAX(display_order), 0) + 1 AS value FROM events`
 
@@ -203,83 +262,67 @@ export async function POST(request: NextRequest) {
       INSERT INTO events (
         title, description, event_date,
         venue_name, venue_address, venue_url, maps_url, ticket_url,
-        image_scale, image_pos_x, image_pos_y, image_width, image_height, display_order,
+        image_scale, image_pos_x, image_pos_y, display_order,
         venue, venue_link, city, ticket_link,
         is_published
       )
       VALUES (
-        ${title}, ${description || null}, ${event_date},
-        ${venue_name}, ${venue_address || null}, ${venue_url || null}, ${maps_url || null}, ${ticket_url || null},
-        ${Math.max(50, Math.min(200, Number(image_scale) || 100))},
-        ${Number.isFinite(Number(image_pos_x)) ? Number(image_pos_x) : 0},
-        ${Number.isFinite(Number(image_pos_y)) ? Number(image_pos_y) : 0},
-        ${Math.max(120, Number(image_width) || 360)},
-        ${Math.max(80, Number(image_height) || 112)},
+        ${ev.title}, ${ev.description}, ${ev.event_date},
+        ${ev.venue_name}, ${ev.venue_address}, ${ev.venue_url}, ${ev.maps_url}, ${ev.ticket_url},
+        ${ev.image_scale}, ${ev.image_pos_x}, ${ev.image_pos_y},
         ${nextOrder[0].value},
-        ${venue_name}, ${maps_url || venue_url || null}, ${venue_address || null}, ${ticket_url || null},
-        ${is_published ?? true}
+        ${ev.venue_name}, ${ev.maps_url || ev.venue_url}, ${ev.venue_address}, ${ev.ticket_url},
+        ${ev.is_published}
       )
       RETURNING *
     `
 
     const event = result[0]
-    await upsertUploadedImage(event.id, uploaded_image || null)
+    await upsertUploadedImage(event.id, ev.uploaded_image)
 
     return NextResponse.json(event, { status: 201 })
   } catch (error) {
     console.error("Failed to create event:", error)
-    const message = error instanceof Error ? error.message : "Failed to create event"
-    return NextResponse.json({ error: message }, { status: 500 })
+    return NextResponse.json({ error: "Event konnte nicht erstellt werden" }, { status: 500 })
   }
 }
 
 export async function PUT(request: NextRequest) {
-  if (!(await isAuthenticated())) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
   try {
+    const denied = await requireAdmin(request)
+    if (denied) return denied
     await ensureEventsSchema()
     const sql = getSql()
-    const body = await request.json()
-    const {
-      id,
-      title,
-      description,
-      event_date,
-      venue_name,
-      venue_address,
-      venue_url,
-      maps_url,
-      ticket_url,
-      image_scale,
-      image_pos_x,
-      image_pos_y,
-      image_width,
-      image_height,
-      is_published,
-      uploaded_image,
-    } = body
+    const body = await request.json().catch(() => ({}))
+    const id = Number(body?.id)
+    if (!Number.isInteger(id) || id <= 0) {
+      return NextResponse.json({ error: "Ungueltige Event-ID" }, { status: 400 })
+    }
+    const validated = validateEventBody(body)
+    if ("error" in validated) {
+      return NextResponse.json({ error: validated.error }, { status: 400 })
+    }
+    const ev = validated.event
 
     const result = await sql`
       UPDATE events SET
-        title = ${title},
-        description = ${description || null},
-        event_date = ${event_date},
-        venue_name = ${venue_name},
-        venue_address = ${venue_address || null},
-        venue_url = ${venue_url || null},
-        maps_url = ${maps_url || null},
-        ticket_url = ${ticket_url || null},
-        image_scale = ${Math.max(50, Math.min(200, Number(image_scale) || 100))},
-        image_pos_x = ${Number.isFinite(Number(image_pos_x)) ? Number(image_pos_x) : 0},
-        image_pos_y = ${Number.isFinite(Number(image_pos_y)) ? Number(image_pos_y) : 0},
-        image_width = ${Math.max(120, Number(image_width) || 360)},
-        image_height = ${Math.max(80, Number(image_height) || 112)},
-        venue = ${venue_name},
-        venue_link = ${maps_url || venue_url || null},
-        city = ${venue_address || null},
-        ticket_link = ${ticket_url || null},
-        is_published = ${is_published ?? true},
+        title = ${ev.title},
+        description = ${ev.description},
+        event_date = ${ev.event_date},
+        venue_name = ${ev.venue_name},
+        venue_address = ${ev.venue_address},
+        venue_url = ${ev.venue_url},
+        maps_url = ${ev.maps_url},
+        ticket_url = ${ev.ticket_url},
+        image_scale = ${ev.image_scale},
+        image_pos_x = ${ev.image_pos_x},
+        image_pos_y = ${ev.image_pos_y},
+        image_url = CASE WHEN ${ev.remove_image} THEN NULL ELSE image_url END,
+        venue = ${ev.venue_name},
+        venue_link = ${ev.maps_url || ev.venue_url},
+        city = ${ev.venue_address},
+        ticket_link = ${ev.ticket_url},
+        is_published = ${ev.is_published},
         updated_at = NOW()
       WHERE id = ${id}
       RETURNING *
@@ -289,24 +332,27 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "Event not found" }, { status: 404 })
     }
 
-    await upsertUploadedImage(Number(id), uploaded_image || null)
+    if (ev.remove_image) {
+      await sql`DELETE FROM event_images WHERE event_id = ${id}`
+    }
+    await upsertUploadedImage(id, ev.uploaded_image)
     return NextResponse.json(result[0])
   } catch (error) {
     console.error("Failed to update event:", error)
-    const message = error instanceof Error ? error.message : "Failed to update event"
-    return NextResponse.json({ error: message }, { status: 500 })
+    return NextResponse.json({ error: "Event konnte nicht aktualisiert werden" }, { status: 500 })
   }
 }
 
 export async function PATCH(request: NextRequest) {
-  if (!(await isAuthenticated())) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
   try {
+    const denied = await requireAdmin(request)
+    if (denied) return denied
     await ensureEventsSchema()
     const sql = getSql()
-    const body = await request.json()
-    const orderedIds: number[] = Array.isArray(body?.orderedIds) ? body.orderedIds : []
+    const body = await request.json().catch(() => ({}))
+    const orderedIds: number[] = Array.isArray(body?.orderedIds)
+      ? body.orderedIds.map(Number).filter((n: number) => Number.isInteger(n) && n > 0)
+      : []
     if (orderedIds.length === 0) {
       return NextResponse.json({ error: "orderedIds required" }, { status: 400 })
     }
@@ -322,28 +368,27 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error("Failed to reorder events:", error)
-    const message = error instanceof Error ? error.message : "Failed to reorder events"
-    return NextResponse.json({ error: message }, { status: 500 })
+    return NextResponse.json({ error: "Sortierung fehlgeschlagen" }, { status: 500 })
   }
 }
 
 export async function DELETE(request: NextRequest) {
-  if (!(await isAuthenticated())) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
   try {
+    const denied = await requireAdmin(request)
+    if (denied) return denied
     await ensureEventsSchema()
     const sql = getSql()
     const { searchParams } = new URL(request.url)
-    const id = searchParams.get("id")
-    if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 })
+    const id = Number(searchParams.get("id"))
+    if (!Number.isInteger(id) || id <= 0) {
+      return NextResponse.json({ error: "Missing id" }, { status: 400 })
+    }
 
     await sql`DELETE FROM event_images WHERE event_id = ${id}`
     await sql`DELETE FROM events WHERE id = ${id}`
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error("Failed to delete event:", error)
-    const message = error instanceof Error ? error.message : "Failed to delete event"
-    return NextResponse.json({ error: message }, { status: 500 })
+    return NextResponse.json({ error: "Loeschen fehlgeschlagen" }, { status: 500 })
   }
 }

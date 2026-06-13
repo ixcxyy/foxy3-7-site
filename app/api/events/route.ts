@@ -1,22 +1,9 @@
-import { neon } from "@neondatabase/serverless"
 import { NextResponse } from "next/server"
+import { getSql } from "@/lib/db"
 
-function getSql() {
-  const databaseUrl =
-    process.env.DATABASE_URL ||
-    process.env.POSTGRES_URL ||
-    process.env.POSTGRES_PRISMA_URL ||
-    process.env.POSTGRES_URL_NON_POOLING
-
-  if (!databaseUrl) {
-    throw new Error("No database URL configured")
-  }
-  return neon(databaseUrl)
-}
-
-function imageUrlFor(eventId: number, externalUrl: string | null, hasUploadedImage: boolean) {
+function imageUrlFor(eventId: number, externalUrl: string | null, imageUpdatedAt: string | null) {
   if (externalUrl) return externalUrl
-  if (hasUploadedImage) return `/api/events/image/${eventId}`
+  if (imageUpdatedAt) return `/api/events/image/${eventId}?v=${new Date(imageUpdatedAt).getTime()}`
   return null
 }
 
@@ -35,8 +22,8 @@ async function ensurePublicEventsSchema() {
       ticket_url VARCHAR(500),
       image_url VARCHAR(500),
       image_scale INTEGER DEFAULT 100,
-      image_pos_x INTEGER DEFAULT 0,
-      image_pos_y INTEGER DEFAULT 0,
+      image_pos_x INTEGER DEFAULT 50,
+      image_pos_y INTEGER DEFAULT 50,
       image_width INTEGER DEFAULT 360,
       image_height INTEGER DEFAULT 112,
       display_order INTEGER DEFAULT 0,
@@ -57,8 +44,8 @@ async function ensurePublicEventsSchema() {
     ALTER TABLE events
     ADD COLUMN IF NOT EXISTS maps_url VARCHAR(500),
     ADD COLUMN IF NOT EXISTS image_scale INTEGER DEFAULT 100,
-    ADD COLUMN IF NOT EXISTS image_pos_x INTEGER DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS image_pos_y INTEGER DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS image_pos_x INTEGER DEFAULT 50,
+    ADD COLUMN IF NOT EXISTS image_pos_y INTEGER DEFAULT 50,
     ADD COLUMN IF NOT EXISTS image_width INTEGER DEFAULT 360,
     ADD COLUMN IF NOT EXISTS image_height INTEGER DEFAULT 112,
     ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0
@@ -71,16 +58,18 @@ export async function GET() {
     const sql = getSql()
     const events = await sql`
       SELECT
-        e.*,
-        CASE WHEN ei.event_id IS NULL THEN false ELSE true END AS has_uploaded_image
+        e.id, e.title, e.description, e.event_date,
+        e.venue_name, e.venue_address, e.venue_url, e.maps_url, e.ticket_url,
+        e.image_url, e.image_scale, e.image_pos_x, e.image_pos_y,
+        ei.updated_at AS image_updated_at
       FROM events e
       LEFT JOIN event_images ei ON ei.event_id = e.id
-      WHERE e.is_published = true 
+      WHERE e.is_published = true
       ORDER BY e.display_order ASC, e.event_date ASC, e.id ASC
     `
     const normalized = events.map((event) => ({
       ...event,
-      image_url: imageUrlFor(event.id, event.image_url, event.has_uploaded_image),
+      image_url: imageUrlFor(event.id, event.image_url, event.image_updated_at),
     }))
     return NextResponse.json(normalized, { headers: { "Cache-Control": "no-store" } })
   } catch (error) {

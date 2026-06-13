@@ -1,6 +1,7 @@
 "use client"
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react"
+import { FormEvent, useMemo, useEffect, useRef, useState } from "react"
+import { eventImageStyle } from "@/lib/event-image"
 
 type AdminEvent = {
   id: number
@@ -16,8 +17,6 @@ type AdminEvent = {
   image_scale: number | null
   image_pos_x: number | null
   image_pos_y: number | null
-  image_width: number | null
-  image_height: number | null
   display_order: number | null
   is_published: boolean
 }
@@ -40,8 +39,6 @@ type EventForm = {
   image_scale: number
   image_pos_x: number
   image_pos_y: number
-  image_width: number
-  image_height: number
   is_published: boolean
 }
 
@@ -56,10 +53,8 @@ const emptyForm: EventForm = {
   maps_url: "",
   ticket_url: "",
   image_scale: 100,
-  image_pos_x: 0,
-  image_pos_y: 0,
-  image_width: 360,
-  image_height: 112,
+  image_pos_x: 50,
+  image_pos_y: 50,
   is_published: true,
 }
 
@@ -67,6 +62,17 @@ function formatDate(value: string) {
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return value
   return d.toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit", year: "numeric" })
+}
+
+function toDateInputValue(value: string): string {
+  const raw = String(value || "")
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10)
+  const d = new Date(raw)
+  return Number.isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10)
+}
+
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)))
 }
 
 async function fileToOptimizedBase64(file: File): Promise<UploadedImage> {
@@ -96,6 +102,8 @@ async function fileToOptimizedBase64(file: File): Promise<UploadedImage> {
   return { base64, mimeType }
 }
 
+const inputStyle = { backgroundColor: "#090909", border: "1px solid #222", color: "#fff" } as const
+
 export default function AdminPage() {
   const [loading, setLoading] = useState(true)
   const [authenticated, setAuthenticated] = useState(false)
@@ -108,30 +116,46 @@ export default function AdminPage() {
   const [reordering, setReordering] = useState(false)
   const [uploadedImage, setUploadedImage] = useState<UploadedImage | null>(null)
   const [uploadedImagePreview, setUploadedImagePreview] = useState<string | null>(null)
-  const [dragMode, setDragMode] = useState<"move" | "resize" | null>(null)
-  const [dragStart, setDragStart] = useState<{ x: number; y: number; px: number; py: number; w: number; h: number } | null>(null)
-  const previewCanvasRef = useRef<HTMLDivElement>(null)
+  const [removeImage, setRemoveImage] = useState(false)
+  const [draggingFocal, setDraggingFocal] = useState(false)
+  const [showPasswordForm, setShowPasswordForm] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState("")
+  const [newPassword, setNewPassword] = useState("")
+  const [changingPassword, setChangingPassword] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   async function checkAuth() {
     setLoading(true)
-    const response = await fetch("/api/admin/auth", { cache: "no-store" })
-    const data = await response.json()
-    setAuthenticated(Boolean(data?.authenticated))
-    setLoading(false)
-    return Boolean(data?.authenticated)
+    try {
+      const response = await fetch("/api/admin/auth", { cache: "no-store" })
+      const data = await response.json()
+      const isAuth = Boolean(data?.authenticated)
+      setAuthenticated(isAuth)
+      return isAuth
+    } catch {
+      setAuthenticated(false)
+      setStatus("Verbindung fehlgeschlagen. Bitte Seite neu laden.")
+      return false
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function loadEvents() {
-    const response = await fetch("/api/admin/events", { cache: "no-store" })
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}))
-      setStatus(body?.error ? `Events konnten nicht geladen werden: ${body.error}` : "Events konnten nicht geladen werden.")
-      return
+    try {
+      const response = await fetch("/api/admin/events", { cache: "no-store" })
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}))
+        setStatus(body?.error ? `Events konnten nicht geladen werden: ${body.error}` : "Events konnten nicht geladen werden.")
+        return
+      }
+      const data = await response.json()
+      const normalized = Array.isArray(data) ? data : []
+      normalized.sort((a: AdminEvent, b: AdminEvent) => (a.display_order ?? 0) - (b.display_order ?? 0))
+      setEvents(normalized)
+    } catch {
+      setStatus("Events konnten nicht geladen werden (Netzwerkfehler).")
     }
-    const data = await response.json()
-    const normalized = Array.isArray(data) ? data : []
-    normalized.sort((a: AdminEvent, b: AdminEvent) => (a.display_order ?? 0) - (b.display_order ?? 0))
-    setEvents(normalized)
   }
 
   useEffect(() => {
@@ -142,37 +166,75 @@ export default function AdminPage() {
 
   const previewImage = useMemo(() => {
     if (uploadedImagePreview) return uploadedImagePreview
+    if (removeImage) return null
     const editingEvent = events.find((e) => e.id === form.id)
     return editingEvent?.image_url || null
-  }, [uploadedImagePreview, events, form.id])
+  }, [uploadedImagePreview, removeImage, events, form.id])
+
+  const editingHasImage = useMemo(() => {
+    const editingEvent = events.find((e) => e.id === form.id)
+    return Boolean(editingEvent?.image_url)
+  }, [events, form.id])
 
   async function onLogin(event: FormEvent) {
     event.preventDefault()
     setStatus("")
-    const response = await fetch("/api/admin/auth", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    })
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}))
-      setStatus(body?.error ? `Login fehlgeschlagen: ${body.error}` : "Login fehlgeschlagen.")
-      return
+    try {
+      const response = await fetch("/api/admin/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      })
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}))
+        setStatus(body?.error ? `Login fehlgeschlagen: ${body.error}` : "Login fehlgeschlagen.")
+        return
+      }
+      setPassword("")
+      setAuthenticated(true)
+      setStatus("Angemeldet.")
+      await loadEvents()
+    } catch {
+      setStatus("Login fehlgeschlagen (Netzwerkfehler).")
     }
-    setPassword("")
-    setAuthenticated(true)
-    setStatus("Angemeldet.")
-    await loadEvents()
   }
 
   async function onLogout() {
-    await fetch("/api/admin/auth", { method: "DELETE" })
+    try {
+      await fetch("/api/admin/auth", { method: "DELETE" })
+    } catch {
+      // Session cookie may already be gone; reset the UI regardless.
+    }
     setAuthenticated(false)
     setEvents([])
-    setForm(emptyForm)
-    setUploadedImage(null)
-    setUploadedImagePreview(null)
+    clearEditor()
     setStatus("Abgemeldet.")
+  }
+
+  async function onChangePassword(event: FormEvent) {
+    event.preventDefault()
+    setStatus("")
+    setChangingPassword(true)
+    try {
+      const response = await fetch("/api/admin/auth", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      })
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}))
+        setStatus(body?.error ? `Passwort-Aenderung fehlgeschlagen: ${body.error}` : "Passwort-Aenderung fehlgeschlagen.")
+        return
+      }
+      setCurrentPassword("")
+      setNewPassword("")
+      setShowPasswordForm(false)
+      setStatus("Passwort geaendert.")
+    } catch {
+      setStatus("Passwort-Aenderung fehlgeschlagen (Netzwerkfehler).")
+    } finally {
+      setChangingPassword(false)
+    }
   }
 
   async function onImageSelect(file: File | null) {
@@ -186,7 +248,9 @@ export default function AdminPage() {
       const optimized = await fileToOptimizedBase64(file)
       setUploadedImage(optimized)
       setUploadedImagePreview(`data:${optimized.mimeType};base64,${optimized.base64}`)
-      setStatus("Bild bereit.")
+      setRemoveImage(false)
+      setForm((p) => ({ ...p, image_pos_x: 50, image_pos_y: 50, image_scale: 100 }))
+      setStatus("Bild bereit. Fokuspunkt im Preview per Klick/Ziehen setzen.")
     } catch (error) {
       setUploadedImage(null)
       setUploadedImagePreview(null)
@@ -198,6 +262,8 @@ export default function AdminPage() {
     setForm(emptyForm)
     setUploadedImage(null)
     setUploadedImagePreview(null)
+    setRemoveImage(false)
+    if (fileInputRef.current) fileInputRef.current.value = ""
   }
 
   async function onSave(event: FormEvent) {
@@ -213,26 +279,31 @@ export default function AdminPage() {
       maps_url: form.maps_url || null,
       ticket_url: form.ticket_url || null,
       uploaded_image: uploadedImage,
+      remove_image: removeImage,
     }
 
-    const method = form.id ? "PUT" : "POST"
-    const response = await fetch("/api/admin/events", {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    })
+    try {
+      const method = form.id ? "PUT" : "POST"
+      const response = await fetch("/api/admin/events", {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
 
-    setSaving(false)
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}))
+        setStatus(body?.error ? `Speichern fehlgeschlagen: ${body.error}` : "Speichern fehlgeschlagen.")
+        return
+      }
 
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}))
-      setStatus(body?.error ? `Speichern fehlgeschlagen: ${body.error}` : "Speichern fehlgeschlagen.")
-      return
+      setStatus(form.id ? "Event aktualisiert." : "Event erstellt.")
+      clearEditor()
+      await loadEvents()
+    } catch {
+      setStatus("Speichern fehlgeschlagen (Netzwerkfehler).")
+    } finally {
+      setSaving(false)
     }
-
-    setStatus(form.id ? "Event aktualisiert." : "Event erstellt.")
-    clearEditor()
-    await loadEvents()
   }
 
   function onEdit(event: AdminEvent) {
@@ -240,53 +311,63 @@ export default function AdminPage() {
       id: event.id,
       title: event.title ?? "",
       description: event.description ?? "",
-      event_date: event.event_date ? new Date(event.event_date).toISOString().slice(0, 10) : "",
+      event_date: toDateInputValue(event.event_date),
       venue_name: event.venue_name ?? "",
       venue_address: event.venue_address ?? "",
       venue_url: event.venue_url ?? "",
       maps_url: event.maps_url ?? "",
       ticket_url: event.ticket_url ?? "",
-      image_scale: Math.max(50, Math.min(200, Number(event.image_scale) || 100)),
-      image_pos_x: Number(event.image_pos_x) || 0,
-      image_pos_y: Number(event.image_pos_y) || 0,
-      image_width: Math.max(120, Number(event.image_width) || 360),
-      image_height: Math.max(80, Number(event.image_height) || 112),
+      image_scale: Math.max(100, Math.min(300, Number(event.image_scale) || 100)),
+      image_pos_x: clampPercent(Number(event.image_pos_x) || 50),
+      image_pos_y: clampPercent(Number(event.image_pos_y) || 50),
       is_published: Boolean(event.is_published),
     })
     setUploadedImage(null)
     setUploadedImagePreview(null)
+    setRemoveImage(false)
+    if (fileInputRef.current) fileInputRef.current.value = ""
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
 
   async function onDelete(id: number) {
     if (!window.confirm("Event wirklich loeschen?")) return
     setStatus("")
-    const response = await fetch(`/api/admin/events?id=${id}`, { method: "DELETE" })
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}))
-      setStatus(body?.error ? `Loeschen fehlgeschlagen: ${body.error}` : "Loeschen fehlgeschlagen.")
-      return
+    try {
+      const response = await fetch(`/api/admin/events?id=${id}`, { method: "DELETE" })
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}))
+        setStatus(body?.error ? `Loeschen fehlgeschlagen: ${body.error}` : "Loeschen fehlgeschlagen.")
+        return
+      }
+      setStatus("Event geloescht.")
+      if (form.id === id) clearEditor()
+      await loadEvents()
+    } catch {
+      setStatus("Loeschen fehlgeschlagen (Netzwerkfehler).")
     }
-    setStatus("Event geloescht.")
-    await loadEvents()
   }
 
   async function saveOrder(next: AdminEvent[]) {
     const orderedIds = next.map((event) => event.id)
     setReordering(true)
-    const response = await fetch("/api/admin/events", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ orderedIds }),
-    })
-    setReordering(false)
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}))
-      setStatus(body?.error ? `Sortierung fehlgeschlagen: ${body.error}` : "Sortierung fehlgeschlagen.")
-      return
+    try {
+      const response = await fetch("/api/admin/events", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderedIds }),
+      })
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}))
+        setStatus(body?.error ? `Sortierung fehlgeschlagen: ${body.error}` : "Sortierung fehlgeschlagen.")
+        return
+      }
+      setStatus("Reihenfolge gespeichert.")
+      setEvents(next.map((event, index) => ({ ...event, display_order: index + 1 })))
+    } catch {
+      setStatus("Sortierung fehlgeschlagen (Netzwerkfehler).")
+    } finally {
+      setReordering(false)
     }
-    setStatus("Reihenfolge gespeichert.")
-    setEvents(next.map((event, index) => ({ ...event, display_order: index + 1 })))
   }
 
   async function moveEvent(index: number, direction: -1 | 1) {
@@ -299,37 +380,12 @@ export default function AdminPage() {
     await saveOrder(next)
   }
 
-  useEffect(() => {
-    if (!dragMode || !dragStart) return
-    const onMove = (e: MouseEvent) => {
-      const canvas = previewCanvasRef.current
-      if (!canvas) return
-      const rect = canvas.getBoundingClientRect()
-      const dx = e.clientX - dragStart.x
-      const dy = e.clientY - dragStart.y
-      if (dragMode === "move") {
-        const maxX = Math.max(0, rect.width - form.image_width)
-        const maxY = Math.max(0, rect.height - form.image_height)
-        const nextX = Math.max(0, Math.min(maxX, dragStart.px + dx))
-        const nextY = Math.max(0, Math.min(maxY, dragStart.py + dy))
-        setForm((p) => ({ ...p, image_pos_x: Math.round(nextX), image_pos_y: Math.round(nextY) }))
-      } else {
-        const nextW = Math.max(120, dragStart.w + dx)
-        const nextH = Math.max(80, dragStart.h + dy)
-        setForm((p) => ({ ...p, image_width: Math.round(nextW), image_height: Math.round(nextH) }))
-      }
-    }
-    const onUp = () => {
-      setDragMode(null)
-      setDragStart(null)
-    }
-    window.addEventListener("mousemove", onMove)
-    window.addEventListener("mouseup", onUp)
-    return () => {
-      window.removeEventListener("mousemove", onMove)
-      window.removeEventListener("mouseup", onUp)
-    }
-  }, [dragMode, dragStart, form.image_height, form.image_width])
+  function updateFocalFromPointer(e: React.PointerEvent<HTMLDivElement>) {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = clampPercent(((e.clientX - rect.left) / rect.width) * 100)
+    const y = clampPercent(((e.clientY - rect.top) / rect.height) * 100)
+    setForm((p) => ({ ...p, image_pos_x: x, image_pos_y: y }))
+  }
 
   if (loading) {
     return (
@@ -357,18 +413,20 @@ export default function AdminPage() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="Username"
+                autoComplete="username"
                 required
                 className="w-full px-3 py-2 text-sm"
-                style={{ backgroundColor: "#090909", border: "1px solid #222", color: "#fff" }}
+                style={inputStyle}
               />
               <input
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Password"
                 type="password"
+                autoComplete="current-password"
                 required
                 className="w-full px-3 py-2 text-sm"
-                style={{ backgroundColor: "#090909", border: "1px solid #222", color: "#fff" }}
+                style={inputStyle}
               />
               <button
                 type="submit"
@@ -401,13 +459,22 @@ export default function AdminPage() {
               Upload, Editor, Sortierung
             </p>
           </div>
-          <button
-            onClick={onLogout}
-            className="px-4 py-2 font-mono text-xs tracking-[0.15em] uppercase"
-            style={{ border: "1px solid rgba(230,57,70,0.5)", color: "#e63946" }}
-          >
-            Logout
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowPasswordForm((v) => !v)}
+              className="px-4 py-2 font-mono text-xs tracking-[0.15em] uppercase"
+              style={{ border: "1px solid #333", color: "#bbb" }}
+            >
+              Passwort
+            </button>
+            <button
+              onClick={onLogout}
+              className="px-4 py-2 font-mono text-xs tracking-[0.15em] uppercase"
+              style={{ border: "1px solid rgba(230,57,70,0.5)", color: "#e63946" }}
+            >
+              Logout
+            </button>
+          </div>
         </div>
 
         {status && (
@@ -416,9 +483,48 @@ export default function AdminPage() {
           </p>
         )}
 
+        {showPasswordForm && (
+          <section className="mb-10 p-6 md:p-8" style={{ backgroundColor: "#0f0f0f", border: "1px solid rgba(230,57,70,0.15)" }}>
+            <h2 className="mb-5 text-xl font-bold uppercase tracking-tight" style={{ color: "#fff" }}>
+              Passwort aendern
+            </h2>
+            <form onSubmit={onChangePassword} className="grid max-w-xl grid-cols-1 gap-4">
+              <input
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                placeholder="Aktuelles Passwort"
+                type="password"
+                autoComplete="current-password"
+                required
+                className="px-3 py-2 text-sm"
+                style={inputStyle}
+              />
+              <input
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Neues Passwort (mind. 10 Zeichen)"
+                type="password"
+                autoComplete="new-password"
+                minLength={10}
+                required
+                className="px-3 py-2 text-sm"
+                style={inputStyle}
+              />
+              <button
+                type="submit"
+                disabled={changingPassword}
+                className="px-4 py-2 font-mono text-xs tracking-[0.2em] uppercase disabled:opacity-50"
+                style={{ backgroundColor: "#e63946", color: "#fff" }}
+              >
+                {changingPassword ? "Speichert..." : "Passwort aendern"}
+              </button>
+            </form>
+          </section>
+        )}
+
         <section className="mb-10 p-6 md:p-8" style={{ backgroundColor: "#0f0f0f", border: "1px solid rgba(230,57,70,0.15)" }}>
           <h2 className="mb-5 text-xl font-bold uppercase tracking-tight" style={{ color: "#fff" }}>
-            {form.id ? "Event bearbeiten" : "Neues Event"}
+            {form.id ? `Event bearbeiten (#${form.id})` : "Neues Event"}
           </h2>
           <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
             <form onSubmit={onSave} className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -427,8 +533,9 @@ export default function AdminPage() {
                 onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))}
                 placeholder="Titel"
                 required
+                maxLength={255}
                 className="px-3 py-2 text-sm"
-                style={{ backgroundColor: "#090909", border: "1px solid #222", color: "#fff" }}
+                style={inputStyle}
               />
               <input
                 type="date"
@@ -436,67 +543,111 @@ export default function AdminPage() {
                 onChange={(e) => setForm((p) => ({ ...p, event_date: e.target.value }))}
                 required
                 className="px-3 py-2 text-sm"
-                style={{ backgroundColor: "#090909", border: "1px solid #222", color: "#fff" }}
+                style={inputStyle}
               />
               <input
                 value={form.venue_name}
                 onChange={(e) => setForm((p) => ({ ...p, venue_name: e.target.value }))}
                 placeholder="Venue Name"
                 required
+                maxLength={255}
                 className="px-3 py-2 text-sm"
-                style={{ backgroundColor: "#090909", border: "1px solid #222", color: "#fff" }}
+                style={inputStyle}
               />
               <input
                 value={form.venue_address}
                 onChange={(e) => setForm((p) => ({ ...p, venue_address: e.target.value }))}
                 placeholder="Venue Adresse (optional)"
+                maxLength={500}
                 className="px-3 py-2 text-sm"
-                style={{ backgroundColor: "#090909", border: "1px solid #222", color: "#fff" }}
+                style={inputStyle}
               />
               <input
                 value={form.venue_url}
                 onChange={(e) => setForm((p) => ({ ...p, venue_url: e.target.value }))}
                 placeholder="Venue Website URL (optional)"
+                type="url"
                 className="px-3 py-2 text-sm"
-                style={{ backgroundColor: "#090909", border: "1px solid #222", color: "#fff" }}
+                style={inputStyle}
               />
               <input
                 value={form.maps_url}
                 onChange={(e) => setForm((p) => ({ ...p, maps_url: e.target.value }))}
                 placeholder="Google Maps URL (optional)"
+                type="url"
                 className="px-3 py-2 text-sm"
-                style={{ backgroundColor: "#090909", border: "1px solid #222", color: "#fff" }}
+                style={inputStyle}
               />
               <input
                 value={form.ticket_url}
                 onChange={(e) => setForm((p) => ({ ...p, ticket_url: e.target.value }))}
                 placeholder="Ticket URL (optional)"
+                type="url"
                 className="px-3 py-2 text-sm"
-                style={{ backgroundColor: "#090909", border: "1px solid #222", color: "#fff" }}
+                style={inputStyle}
               />
-              <div className="px-3 py-2 text-xs md:col-span-2" style={{ backgroundColor: "#090909", border: "1px solid #222", color: "#888" }}>
-                Bild im Preview frei ziehen und unten rechts vergroessern/verkleinern.
-              </div>
 
               <div className="md:col-span-2">
                 <label className="mb-2 block font-mono text-[11px] uppercase tracking-[0.1em]" style={{ color: "#999" }}>
-                  Bild hochladen (wird in Neon gespeichert)
+                  Event-Bild hochladen (JPEG, PNG oder WebP, max. 2 MB)
                 </label>
                 <input
+                  ref={fileInputRef}
                   type="file"
                   accept="image/png,image/jpeg,image/webp"
                   onChange={(e) => onImageSelect(e.target.files?.[0] || null)}
                   className="w-full px-3 py-2 text-sm"
-                  style={{ backgroundColor: "#090909", border: "1px solid #222", color: "#fff" }}
+                  style={inputStyle}
                 />
+                {(editingHasImage || uploadedImage) && !removeImage && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRemoveImage(true)
+                      setUploadedImage(null)
+                      setUploadedImagePreview(null)
+                      if (fileInputRef.current) fileInputRef.current.value = ""
+                    }}
+                    className="mt-2 px-3 py-2 font-mono text-[11px] tracking-[0.15em] uppercase"
+                    style={{ border: "1px solid #333", color: "#aaa" }}
+                  >
+                    Bild entfernen
+                  </button>
+                )}
+                {removeImage && (
+                  <p className="mt-2 text-xs" style={{ color: "#e63946" }}>
+                    Bild wird beim Speichern entfernt.
+                  </p>
+                )}
               </div>
+
+              {previewImage && (
+                <div className="md:col-span-2">
+                  <label className="mb-2 block font-mono text-[11px] uppercase tracking-[0.1em]" style={{ color: "#999" }}>
+                    Zoom: {form.image_scale}%
+                  </label>
+                  <input
+                    type="range"
+                    min={100}
+                    max={300}
+                    step={5}
+                    value={form.image_scale}
+                    onChange={(e) => setForm((p) => ({ ...p, image_scale: Number(e.target.value) }))}
+                    className="w-full"
+                  />
+                  <p className="mt-1 text-xs" style={{ color: "#777" }}>
+                    Bildausschnitt: im Preview rechts klicken oder ziehen, um den Fokuspunkt zu setzen.
+                  </p>
+                </div>
+              )}
 
               <textarea
                 value={form.description}
                 onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
                 placeholder="Beschreibung (optional)"
+                maxLength={5000}
                 className="min-h-28 px-3 py-2 text-sm md:col-span-2"
-                style={{ backgroundColor: "#090909", border: "1px solid #222", color: "#fff" }}
+                style={inputStyle}
               />
 
               <label className="flex items-center gap-2 text-sm md:col-span-2" style={{ color: "#bbb" }}>
@@ -530,12 +681,55 @@ export default function AdminPage() {
 
             <div>
               <p className="mb-3 font-mono text-[11px] tracking-[0.2em] uppercase" style={{ color: "#e63946" }}>
-                Live Preview
+                Live Preview (so erscheint das Event auf der Website)
               </p>
               <article
                 className="relative overflow-hidden"
-                style={{ backgroundColor: "#090909", border: "1px solid rgba(230,57,70,0.2)" }}
+                style={{ backgroundColor: "#0f0f0f", border: "1px solid rgba(230,57,70,0.2)" }}
               >
+                {previewImage && (
+                  <div
+                    className="relative w-full touch-none overflow-hidden"
+                    style={{
+                      aspectRatio: "21 / 9",
+                      borderBottom: "1px solid rgba(230,57,70,0.15)",
+                      cursor: "crosshair",
+                    }}
+                    onPointerDown={(e) => {
+                      e.preventDefault()
+                      e.currentTarget.setPointerCapture(e.pointerId)
+                      setDraggingFocal(true)
+                      updateFocalFromPointer(e)
+                    }}
+                    onPointerMove={(e) => {
+                      if (draggingFocal) updateFocalFromPointer(e)
+                    }}
+                    onPointerUp={() => setDraggingFocal(false)}
+                    onPointerCancel={() => setDraggingFocal(false)}
+                  >
+                    <img
+                      src={previewImage}
+                      alt="Event Preview"
+                      className="pointer-events-none h-full w-full object-cover"
+                      style={eventImageStyle(form)}
+                      draggable={false}
+                    />
+                    <div
+                      className="pointer-events-none absolute inset-0"
+                      style={{ background: "linear-gradient(to top, rgba(10,10,10,0.55), transparent 45%)" }}
+                    />
+                    {/* Focal point marker */}
+                    <div
+                      className="pointer-events-none absolute h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full"
+                      style={{
+                        left: `${form.image_pos_x}%`,
+                        top: `${form.image_pos_y}%`,
+                        border: "2px solid #e63946",
+                        boxShadow: "0 0 0 2px rgba(0,0,0,0.5)",
+                      }}
+                    />
+                  </div>
+                )}
                 <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: "1px solid rgba(230,57,70,0.15)" }}>
                   <p className="font-mono text-xs tracking-[0.15em] uppercase" style={{ color: "#e63946" }}>
                     {form.event_date ? formatDate(form.event_date) : "TT.MM.JJJJ"}
@@ -563,82 +757,22 @@ export default function AdminPage() {
                   )}
                   <div className="flex flex-wrap gap-2">
                     {form.maps_url && (
-                      <a
-                        href={form.maps_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <span
                         className="px-3 py-2 font-mono text-[11px] tracking-[0.15em] uppercase"
                         style={{ border: "1px solid rgba(230,57,70,0.4)", color: "#e63946" }}
                       >
                         Google Maps
-                      </a>
+                      </span>
                     )}
                     {form.ticket_url && (
-                      <a
-                        href={form.ticket_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <span
                         className="px-3 py-2 font-mono text-[11px] tracking-[0.15em] uppercase"
                         style={{ backgroundColor: "rgba(230,57,70,0.2)", color: "#fff" }}
                       >
                         Tickets
-                      </a>
+                      </span>
                     )}
                   </div>
-                  {previewImage && (
-                    <div
-                      ref={previewCanvasRef}
-                      className="relative h-52 w-full overflow-hidden"
-                      style={{ border: "1px solid #1f1f1f" }}
-                    >
-                      <div
-                        className="absolute cursor-move overflow-hidden"
-                        style={{
-                          left: form.image_pos_x,
-                          top: form.image_pos_y,
-                          width: form.image_width,
-                          height: form.image_height,
-                          border: "1px solid rgba(230,57,70,0.6)",
-                        }}
-                        onMouseDown={(e) => {
-                          e.preventDefault()
-                          setDragMode("move")
-                          setDragStart({
-                            x: e.clientX,
-                            y: e.clientY,
-                            px: form.image_pos_x,
-                            py: form.image_pos_y,
-                            w: form.image_width,
-                            h: form.image_height,
-                          })
-                        }}
-                      >
-                        <img
-                          src={previewImage}
-                          alt="Event Preview"
-                          className="h-full w-full object-cover"
-                          draggable={false}
-                        />
-                        <div
-                          className="absolute right-0 bottom-0 h-4 w-4 cursor-se-resize"
-                          style={{ backgroundColor: "#e63946" }}
-                          onMouseDown={(e) => {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            setDragMode("resize")
-                            setDragStart({
-                              x: e.clientX,
-                              y: e.clientY,
-                              px: form.image_pos_x,
-                              py: form.image_pos_y,
-                              w: form.image_width,
-                              h: form.image_height,
-                            })
-                          }}
-                        />
-                      </div>
-                    </div>
-                  )}
                 </div>
               </article>
             </div>
@@ -651,7 +785,7 @@ export default function AdminPage() {
               Alle Events
             </h2>
             <p className="font-mono text-xs" style={{ color: reordering ? "#e63946" : "#666" }}>
-              {reordering ? "Sortierung wird gespeichert..." : "Editor: Reihenfolge per Pfeile"}
+              {reordering ? "Sortierung wird gespeichert..." : "Reihenfolge per Pfeile"}
             </p>
           </div>
           {events.length === 0 ? (
@@ -662,18 +796,41 @@ export default function AdminPage() {
                 <article
                   key={event.id}
                   className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between"
-                  style={{ backgroundColor: "#090909", border: "1px solid #1d1d1d" }}
+                  style={{
+                    backgroundColor: "#090909",
+                    border: form.id === event.id ? "1px solid rgba(230,57,70,0.6)" : "1px solid #1d1d1d",
+                  }}
                 >
-                  <div>
-                    <h3 className="text-lg font-bold" style={{ color: "#fff" }}>
-                      {event.title}
-                    </h3>
-                    <p className="font-mono text-xs tracking-[0.1em] uppercase" style={{ color: "#e63946" }}>
-                      {formatDate(event.event_date)} · {event.venue_name}
-                    </p>
-                    <p className="mt-1 text-sm" style={{ color: event.is_published ? "#7cd992" : "#888" }}>
-                      {event.is_published ? "Veroeffentlicht" : "Entwurf"}
-                    </p>
+                  <div className="flex items-center gap-4">
+                    {event.image_url ? (
+                      <div className="h-14 w-24 shrink-0 overflow-hidden" style={{ border: "1px solid #1d1d1d" }}>
+                        <img
+                          src={event.image_url}
+                          alt=""
+                          className="h-full w-full object-cover"
+                          style={eventImageStyle(event)}
+                          loading="lazy"
+                        />
+                      </div>
+                    ) : (
+                      <div
+                        className="flex h-14 w-24 shrink-0 items-center justify-center font-mono text-[10px] uppercase"
+                        style={{ border: "1px dashed #2a2a2a", color: "#555" }}
+                      >
+                        Kein Bild
+                      </div>
+                    )}
+                    <div>
+                      <h3 className="text-lg font-bold" style={{ color: "#fff" }}>
+                        {event.title}
+                      </h3>
+                      <p className="font-mono text-xs tracking-[0.1em] uppercase" style={{ color: "#e63946" }}>
+                        {formatDate(event.event_date)} · {event.venue_name}
+                      </p>
+                      <p className="mt-1 text-sm" style={{ color: event.is_published ? "#7cd992" : "#888" }}>
+                        {event.is_published ? "Veroeffentlicht" : "Entwurf"}
+                      </p>
+                    </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <button

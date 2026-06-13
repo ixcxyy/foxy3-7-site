@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { Calendar, CalendarPlus, MapPin, ExternalLink, Ticket } from "lucide-react"
 import { useInView } from "@/hooks/use-parallax"
+import { eventImageStyle } from "@/lib/event-image"
 
 interface Event {
   id: number
@@ -18,8 +19,6 @@ interface Event {
   image_scale: number | null
   image_pos_x: number | null
   image_pos_y: number | null
-  image_width: number | null
-  image_height: number | null
 }
 
 function toLocalDay(dateValue: string | Date) {
@@ -63,9 +62,32 @@ function EventCard({ event, index }: { event: Event; index: number }) {
       >
         {/* Red accent top line */}
         <div
-          className="absolute top-0 left-0 h-[2px] w-0 transition-all duration-500 group-hover:w-full"
+          className="absolute top-0 left-0 z-10 h-[2px] w-0 transition-all duration-500 group-hover:w-full"
           style={{ backgroundColor: "#e63946" }}
         />
+
+        {/* Event image banner */}
+        {event.image_url && (
+          <div
+            className="relative w-full overflow-hidden"
+            style={{ aspectRatio: "21 / 9", borderBottom: "1px solid rgba(230,57,70,0.15)" }}
+          >
+            <img
+              src={event.image_url}
+              alt={event.title}
+              className="h-full w-full object-cover"
+              style={{
+                ...eventImageStyle(event),
+                filter: isPast ? "grayscale(70%) brightness(0.55)" : undefined,
+              }}
+              loading="lazy"
+            />
+            <div
+              className="pointer-events-none absolute inset-0"
+              style={{ background: "linear-gradient(to top, rgba(10,10,10,0.55), transparent 45%)" }}
+            />
+          </div>
+        )}
 
         <div className="flex flex-col md:flex-row">
           {/* Date block */}
@@ -154,26 +176,6 @@ function EventCard({ event, index }: { event: Event; index: number }) {
               )}
             </div>
 
-            {event.image_url && (
-              <div
-                className="relative mt-2 h-24 w-full overflow-hidden md:h-28"
-                style={{ border: "1px solid rgba(230,57,70,0.15)", maxWidth: "360px" }}
-              >
-                <img
-                  src={event.image_url}
-                  alt={event.title}
-                  className="absolute max-w-none"
-                  style={{
-                    left: Number(event.image_pos_x) || 0,
-                    top: Number(event.image_pos_y) || 0,
-                    width: Math.max(120, Number(event.image_width) || 360),
-                    height: Math.max(80, Number(event.image_height) || 112),
-                    objectFit: "cover",
-                  }}
-                  loading="lazy"
-                />
-              </div>
-            )}
           </div>
 
           {/* Ticket CTA */}
